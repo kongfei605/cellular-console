@@ -1,0 +1,113 @@
+EC20 Toolbox — HTTPS / WebRTC Audio Loopback 0.1.0
+================================================
+
+This is phase one: browser -> host 69 -> browser software audio echo.
+It does not access EC20, ModemManager, serial ports, ALSA, SMS, PPP or routes.
+It does not yet carry cellular-call audio.
+
+Access and operation
+--------------------
+Open https://192.0.2.10:8788/ over the existing VPN.
+Use the existing administrator username/password from the main console.
+The service reads those credentials through systemd LoadCredential, without
+changing the original file or its permissions. Sessions use a separate,
+Secure/HttpOnly/SameSite=Strict __Host-ec20_audio_session cookie.
+
+Run the 440Hz test first. The browser creates a sine wave that is sent only
+over WebRTC; the local oscillator is NOT connected to the local speakers.
+The returned stream is analysed for its frequency/level and played through
+an audio element. A passing result needs sustained returned signal near
+440Hz and packets in both directions. The test stops after 20 seconds.
+
+For microphone echo, use headphones, grant the site microphone permission,
+and speak. Returned packet/signal detection verifies media connectivity;
+the human listener must assess audibility and quality. Mute and volume
+controls affect returned playback. No audio is recorded or persisted.
+
+Only one browser session can hold a media slot. Another browser receives
+HTTP 409. Stop/logout releases it; no incoming media for 30 seconds also
+releases it. Absolute server maximum is 3 minutes. The browser stops mic
+echo after 175 seconds. Reload detects an owned outstanding session and
+provides a stop button. Page exit requests cleanup; server expiry is the
+fallback if the browser cannot send that request.
+
+TLS trust
+---------
+The installer creates one self-signed ECDSA server certificate, valid for
+180 days, with SAN IP:192.0.2.10 and serverAuth usage; CA:FALSE.
+Private key stays on host 69 at /etc/ec20-audio-loopback/server.key (0600),
+inside a root-only directory. Never commit or copy that key to clients.
+
+Only the public certificate must be trusted on a client. Verify its SHA256
+fingerprint through SSH before installing trust. macOS user-level SSL trust:
+
+  security add-trusted-cert -r trustRoot -p ssl \
+    -k "$HOME/Library/Keychains/login.keychain-db" server.crt
+
+macOS may require the user's system authorization. Hostname-specific policy
+strings were not recognised by the tested Chromium verifier, so trust uses
+the SSL policy and the certificate SAN restricts the server identity to 69.
+No certificate validation bypass or insecure browser flag is used.
+Other clients need their own trust setup. Renewal/replacement requires
+redistributing the new public certificate; the installer never silently
+overwrites an existing key/certificate. Expiry is intentionally visible.
+
+To remove this client trust later, remove this exact certificate in Keychain
+Access (identify by fingerprint), or use security remove-trusted-cert with
+the saved public certificate. This does not remove other user certificates.
+
+Transport and authentication
+----------------------------
+HTTPS TCP 8788 and one ICE UDP mux port 8789 bind only to 192.0.2.10.
+Only IPv4 VPN host candidates are advertised. No public STUN/TURN servers
+are configured; VPN routing must allow browser UDP traffic to 8789.
+The existing HTTP console on 8787 stays unchanged and independent.
+Audio uses PCMU/8000/1 over DTLS-SRTP. The server reflects encoded PCMU RTP
+payloads, rewriting transport headers through Pion. This stage does NOT
+implement a PCM codec/ALSA adapter for EC20. That is a subsequent phase.
+Login is rate limited. Mutations require exact HTTPS Origin plus CSRF token.
+Offers are bounded to one sendrecv audio m-line. Media statistics and stop
+requests are scoped to the owning authenticated session. A distinct peer
+token is checked before stopping. Expired/logged-out sessions release media.
+
+Service isolation and deployment
+--------------------------------
+Build:
+  make test
+  make build-audio
+
+Install the binary and unit on host 69 using:
+  sudo python3 deploy/install-audio.py <binary> deploy/ec20-audio-loopback.service
+
+The installer only starts/restarts ec20-audio-loopback.service. It never
+restarts ec20-console, ec20-failover, NetworkManager or ModemManager.
+Versioned executable directories are /opt/ec20-audio-loopback/releases/.
+current/previous symlinks retain rollback targets on subsequent upgrades.
+
+The systemd unit uses DynamicUser, private devices, a read-only filesystem,
+no capabilities and no AF_UNIX socket support. Credentials are copied into
+the service's private credential directory by systemd. It cannot open the
+system D-Bus or physical serial/audio devices through this service sandbox.
+
+Status:   sudo systemctl status ec20-audio-loopback --no-pager
+Logs:     sudo journalctl -u ec20-audio-loopback -n 30 --no-pager
+Disable:  sudo systemctl disable --now ec20-audio-loopback
+Disabling this service has no effect on the main console or EC20 failover.
+
+Reproducible live synthetic probe
+--------------------------------
+  go build -o bin/ec20-audio-probe ./cmd/ec20-audio-probe
+  ssh -i ~/.ssh/example.pem operator@192.0.2.10 \
+    'sudo cat /etc/ec20-console/credentials.json' | \
+    bin/ec20-audio-probe -cert server.crt
+
+The probe reads credentials only from stdin, verifies TLS with the explicit
+certificate, negotiates ICE/DTLS-SRTP and sends 80 synthetic PCMU payloads.
+It requires at least 70 byte-identical returns, reports no secrets, and
+stops/logs out. Allowance covers startup/teardown packet loss; this is not a
+network packet-loss benchmark. The probe does not access a microphone.
+
+License texts: THIRD_PARTY_AUDIO_NOTICES.txt (pinned dependency modules).
+Pion project: https://github.com/pion/webrtc
+Codec standard: https://www.rfc-editor.org/rfc/rfc7874.html
+Browser media API: https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia

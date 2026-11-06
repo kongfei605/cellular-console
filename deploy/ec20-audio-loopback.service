@@ -1,0 +1,35 @@
+[Unit]
+Description=EC20 Toolbox - HTTPS WebRTC software audio loopback (no hardware)
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=ec20-audio-loopback
+LoadCredential=credentials.json:/etc/ec20-console/credentials.json
+LoadCredential=tls.crt:/etc/ec20-audio-loopback/server.crt
+LoadCredential=tls.key:/etc/ec20-audio-loopback/server.key
+ExecStart=/opt/ec20-audio-loopback/current/ec20-audio-loopback -listen 192.0.2.10:8788 -media 192.0.2.10:8789 -origin https://192.0.2.10:8788 -credentials %d/credentials.json -cert %d/tls.crt -key %d/tls.key
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_NETLINK
+MemoryMax=192M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
