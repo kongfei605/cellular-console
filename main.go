@@ -21,6 +21,7 @@ func main() {
 	data := flag.String("data-dir", "/var/lib/ec20-console", "private inbox directory")
 	credsPath := flag.String("credentials", "/etc/ec20-console/credentials.json", "private administrator credentials file")
 	failover := flag.String("failover-state", "/run/ec20-failover/status.json", "failover controller state")
+	failoverConfig := flag.String("failover-config", "/etc/ec20-failover.json", "read-only failover configuration")
 	deviceID := flag.String("device-id", "", "ModemManager DeviceIdentifier to select")
 	demo := flag.Bool("demo", false, "loopback-only simulated modem; no hardware operations")
 	flag.Parse()
@@ -45,6 +46,7 @@ func main() {
 	}
 	defer backend.Close()
 	app := newApp(backend, inbox, creds, *failover, *demo)
+	app.network.configPath = *failoverConfig
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go app.background(ctx)

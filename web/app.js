@@ -4,12 +4,12 @@ const icon=(name)=>`<svg viewBox="0 0 24 24" aria-hidden="true">${drawings[name]
 function icons(root=document){root.querySelectorAll('[data-icon]').forEach(e=>e.innerHTML=icon(e.dataset.icon));}
 const $=(q)=>document.querySelector(q);
 const esc=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state={logged:false,csrf:'',status:null,messages:[],view:'overview',selected:null,search:'',unread:false,phone:'',busy:false};
+const state={logged:false,csrf:'',status:null,conversations:[],detail:null,view:'overview',selected:null,search:'',unread:false,phone:'',busy:false,authEpoch:0,viewKey:''};
 let polling=false,toastTimer;
-const titles={overview:'总览',inbox:'短信收件箱',calls:'通话控制'};
+const titles={overview:'总览',network:'网络诊断',inbox:'短信会话',calls:'通话控制'};
 function toast(text,error=false){const e=$('#toast');e.textContent=text;e.classList.toggle('error',error);e.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.hidden=true,4500);}
-function showLogin(){state.logged=false;state.csrf='';state.messages=[];state.status=null;state.selected=null;state.phone='';$('#main').textContent='';$('#app').hidden=true;$('#login').hidden=false;$('#password').value='';if($('#dial-dialog').open)$('#dial-dialog').close();}
-function showApp(){state.logged=true;$('#login').hidden=true;$('#app').hidden=false;$('#login-error').textContent='';}
+function showLogin(){state.logged=false;state.authEpoch++;state.csrf='';state.conversations=[];state.detail=null;state.status=null;state.viewKey='';$('#global-calls').hidden=true;state.selected=null;state.phone='';$('#main').textContent='';$('#app').hidden=true;$('#login').hidden=false;$('#password').value='';if($('#dial-dialog').open)$('#dial-dialog').close();}
+function showApp(){state.logged=true;state.authEpoch++;$('#login').hidden=true;$('#app').hidden=false;$('#login-error').textContent='';}
 async function api(path,method='GET',body){
  const opts={method,credentials:'same-origin',headers:{}};
  if(method!=='GET'){opts.headers['X-CSRF-Token']=state.csrf;opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(body||{});}
@@ -17,14 +17,15 @@ async function api(path,method='GET',body){
  try{data=await r.json();}catch{throw new Error('控制台连接暂时不可用');}
  if(!r.ok){if(r.status===401&&path!=='/api/login')showLogin();throw new Error(data.error||'操作未完成');}return data;
 }
-function dateText(value,short=false){const d=new Date(value);if(!value||!Number.isFinite(d.getTime()))return '时间未知';return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',...(short?{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}:{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'})}).format(d);}
+function parseTimestamp(value){return new Date(typeof value==='string'?value.replace(/([+-]\d{2})(\d{2})$/,'$1:$2'):value);}
+function dateText(value,short=false){const d=parseTimestamp(value);if(!value||!Number.isFinite(d.getTime()))return '时间未知';return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',...(short?{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}:{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'})}).format(d);}
 function pill(label,kind='green',dot=false){return `<span class="pill ${kind}">${dot?'<i class="dot"></i>':''}${esc(label)}</span>`;}
 function heading(title,subtitle,overline='DEVICE WORKSPACE'){return `<div class="page-heading"><div><div class="eyebrow">${overline}</div><h1>${title}</h1><p>${subtitle}</p></div><div class="heading-meta">${pill(state.status?.radio?.present?'EC20 已连接':'EC20 未连接',state.status?.radio?.present?'green':'amber',true)}<small>EC20 HOST / 192.0.2.10</small></div></div>`;}
 function empty(iconName,title,text){return `<div class="empty-state"><div class="empty-icon">${icon(iconName)}</div><h3>${title}</h3><p>${text}</p></div>`;}
 function operatorName(raw){if(/UNICOM/i.test(raw||''))return '中国联通';if(/MOBILE/i.test(raw||''))return '中国移动';if(/TELECOM/i.test(raw||''))return '中国电信';return raw||'未注册';}
 function overview(){
  const s=state.status,r=s.radio,f=s.failover,wired=f.active==='wired',vpns=Object.values(f.vpns||{}),up=vpns.filter(Boolean).length,total=vpns.length,signal=Math.max(0,Math.min(100,r.signal||0));
- const count=state.messages.length,unread=state.messages.filter(m=>!m.read).length;
+ const count=s.message_count,unread=s.unread_count;
  const vpnLabel=total?`${up} / ${total}`:'—';
  const items=[['模块型号',r.model||'EC20'],['制造商',r.manufacturer||'Quectel'],['固件版本',r.firmware||'—'],['SIM 状态',r.sim_ready?'已就绪':'等待就绪'],['设备状态',r.state||'未连接'],['主 AT 端口',r.primary_port||'—']];
  return heading('连接总览','设备、网络与消息状态，一目了然。')+
@@ -33,13 +34,7 @@ function overview(){
  `<div class="grid-main"><section class="panel"><div class="panel-heading"><h2>网络连接<span class="sub">自动主备</span></h2><span class="label">NETWORK TOPOLOGY</span></div><div class="topology"><div class="network-node ${wired?'primary':''}"><div class="node-icon">${icon('ethernet')}</div><strong>有线网络</strong><small>${esc(f.wired_ip||'未获取地址')}</small>${pill(wired&&f.wired_healthy?'主用出口':f.wired_healthy?'已恢复':'未就绪',f.wired_healthy?'green':'amber')}</div><div class="node-link">⇄</div><div class="network-node ${!wired?'primary':''}"><div class="node-icon">${icon('radio')}</div><strong>EC20 蜂窝</strong><small>${esc(f.cellular_ip||'未获取地址')}</small>${pill(!f.cellular_present?'未连接':wired?'在线备用':'主用出口',f.cellular_present?'green':'amber')}</div><div class="node-link">→</div><div class="network-node"><div class="node-icon">${icon('shield')}</div><strong>VPN 通道</strong><small>192.0.2.10</small>${pill(total&&up===total?'连接正常':'检查中',total&&up===total?'green':'amber')}</div></div><div class="topology-note">${icon('shield')}主备切换独立于本控制台运行，关闭页面不影响网络接管。</div></section><section class="panel"><div class="panel-heading"><h2>设备信息</h2><span class="label">QUECTEL</span></div><dl class="device-info">${items.map(([k,v])=>`<div class="info-row"><dt>${k}</dt><dd class="${k==='固件版本'||k==='主 AT 端口'?'mono':''}">${esc(v)}</dd></div>`).join('')}</dl></section></div>`+
  `<div class="lower-grid"><section class="panel"><div class="panel-heading"><h2>常用功能</h2><span class="label">QUICK ACCESS</span></div><div class="quick-links"><a href="#inbox" class="quick-link"><span class="quick-icon">${icon('mail')}</span><div><strong>短信收件箱</strong><small>${unread?`${unread} 条消息待查看`:'查看本地短信归档'}</small></div><span class="arrow">↗</span></a><a href="#calls" class="quick-link"><span class="quick-icon">${icon('phone')}</span><div><strong>通话控制</strong><small>${s.call_allowed?'拨号、接听与挂断':'当前通话控制受保护'}</small></div><span class="arrow">↗</span></a></div></section><section class="panel"><div class="panel-heading"><h2>最近动态</h2><span class="label">ACTIVITY</span></div>${s.events?.length?`<div class="events">${s.events.slice(0,4).map(e=>`<div class="event"><i class="dot"></i><div><p>${esc(e.text)}</p><time>${dateText(e.time,true)}</time></div></div>`).join('')}</div>`:'<div class="empty-small">暂无新的设备动态</div>'}</section></div>`;
 }
-function inbox(){
- const filtered=state.messages.filter(m=>(!state.unread||!m.read)&&(!state.search||`${m.sender} ${m.text}`.toLowerCase().includes(state.search.toLowerCase())));
- if(!filtered.some(m=>m.id===state.selected))state.selected=filtered[0]?.id||null;
- const chosen=state.messages.find(m=>m.id===state.selected);
- return heading('短信收件箱','来自 EC20 的消息，安全保存在 69 本地。','MESSAGING / INBOX')+
- `<section class="panel"><div class="inbox-toolbar"><label class="search-box" for="search">${icon('search')}<input id="search" type="search" placeholder="搜索号码或短信内容" value="${esc(state.search)}" autocomplete="off"></label><button class="filter-toggle ${!state.unread?'active':''}" data-filter="all">全部</button><button class="filter-toggle ${state.unread?'active':''}" data-filter="unread">未读</button><span class="inbox-count">${state.messages.length} 条本地归档</span></div><div class="inbox-layout"><div class="message-list">${filtered.length?filtered.map(m=>`<div role="button" tabindex="0" class="message-item ${chosen?.id===m.id?'selected':''}" data-message="${m.id}"><div class="sender-avatar">${esc(m.sender.slice(0,1)||'信')}</div><div class="message-summary"><header><strong>${!m.read?'<i class="unread-dot"></i>':''}${esc(m.sender||'未知号码')}</strong><time>${dateText(m.timestamp||m.first_seen,true)}</time></header><p>${esc(m.text)}</p></div></div>`).join(''):empty('mail',state.search?'没有匹配的短信':'这里还没有短信',state.search?'试试其他号码或关键词。':'新短信到达后会自动出现在这里。')}</div><article class="message-detail">${chosen?`<div class="message-detail-top"><div><h2>${esc(chosen.sender||'未知号码')}</h2><small>${dateText(chosen.timestamp||chosen.first_seen)}</small></div><button class="button secondary" id="copy-message">${icon('copy')}复制</button></div><div class="message-body">${esc(chosen.text)}</div><div class="message-meta">${icon('shield')}本地归档 · 模块拔出后仍可查看 ${!chosen.read?'<button class="filter-toggle" id="mark-read">标为已读</button>':''}</div>`:empty('mail','选择一条短信','点击左侧消息查看完整内容。')}</article></div></section>`;
-}
+function inbox(){return conversationView();}
 function calls(){
  const s=state.status,active=s.calls.filter(c=>c.state_code!==7),ended=s.calls.filter(c=>c.state_code===7).slice(0,8),busy=state.busy||!s.call_allowed||active.length>0;
  const keys=[['1',''],['2','ABC'],['3','DEF'],['4','GHI'],['5','JKL'],['6','MNO'],['7','PQRS'],['8','TUV'],['9','WXYZ'],['+','国际区号'],['0',''],['⌫','删除']];
@@ -48,40 +43,64 @@ function calls(){
  (s.call_allowed?`<div class="notice">${icon('shield')}当前有线主用，允许进行通话控制。蜂窝接管网络时，拨号和接听会自动锁定。</div>`:`<div class="notice amber">${icon('shield')}${esc(s.call_block_reason)}</div>`)+
  `<div class="calls-layout"><section class="panel dialer"><h2>拨打电话</h2><p>使用 EC20 当前 SIM 发起呼叫</p><label class="sr-only" for="phone">电话号码</label><input id="phone" class="phone-input" type="tel" inputmode="tel" placeholder="输入电话号码" maxlength="28" value="${esc(state.phone)}" autocomplete="off"><div class="dial-pad">${keys.map(([key,letters])=>`<button class="dial-key" data-key="${esc(key)}" aria-label="${key==='⌫'?'删除一位':esc(key)}">${esc(key)}<span>${letters||'&nbsp;'}</span></button>`).join('')}</div><button class="button primary dial-action" id="dial" ${busy?'disabled':''}>${icon('phone')}${state.busy?'正在处理…':'拨打电话'}</button><div class="dialer-note">接听和拨号操作仅在有线正常时开放</div></section><div><section class="panel call-area"><div class="panel-heading"><h2>呼叫状态<span class="sub">${active.length} 个进行中</span></h2><span class="label">LIVE CALLS</span></div>${list.length?`<div class="call-list">${list.map(c=>`<div class="call-item ${c.direction==='incoming'&&c.state_code===3?'incoming':''}"><span class="call-round">${icon('phone')}</span><div class="call-info"><strong>${esc(c.number||'未知号码')}</strong><small>${c.direction==='incoming'?'呼入':'呼出'} · ${esc(c.state)}</small></div>${pill(c.state,c.state_code===7?'':'green')}<div class="call-actions">${c.state_code===3&&c.direction==='incoming'?`<button class="button primary" data-call="${esc(c.id)}" data-action="accept" ${!s.call_allowed||state.busy?'disabled':''}>接听</button>`:''}${c.state_code!==7?`<button class="button danger" data-call="${esc(c.id)}" data-action="hangup" ${state.busy?'disabled':''}>${c.state_code===3?'拒接':'挂断'}</button>`:''}</div></div>`).join('')}</div>`:empty('phone','暂无进行中的呼叫','来电会自动显示，也可以使用左侧键盘拨号。')}<div class="call-foot">${icon('clock')}每 5 秒同步呼叫状态。挂断和拒接始终可用。</div></section><div class="audio-note">${icon('volume')}<div><strong>本版提供呼叫控制，双向音频尚未接入</strong><p>当前可执行拨号、接听和挂断；尚不能直接通过浏览器麦克风和扬声器通话。语音网络是否支持实际呼叫，仍取决于 SIM 和运营商。</p></div></div></div></div>`;
 }
-function render(){
+function renderGlobal(){
+ const s=state.status;if(!s)return;const f=s.failover,r=s.radio,fresh=s.network.fresh,vpns=Object.values(f.vpns||{});
+ const device=!fresh?'设备状态待确认':!f.cellular_present?'EC20 未连接':!r.present?'EC20 识别中':'EC20 已连接';
+ const source=!fresh?'出口待确认':f.active==='wired'?'有线主用':f.active==='cellular'?'蜂窝主用':'出口未知';
+ const internet=!fresh?'蜂窝状态过期':!f.cellular_present?'重拨已暂停':f.cellular_healthy?'蜂窝可上网':f.cellular_ip?'蜂窝连通性待确认':'等待蜂窝连接';
+ const health=vpns.length&&vpns.every(Boolean),vpn=fresh&&vpns.length?`VPN ${vpns.filter(Boolean).length}/${vpns.length}`:'VPN 待确认';
+ $('#global-state').innerHTML=`<span class="global-state-item">${icon('radio')}${pill(device,fresh&&f.cellular_present&&r.present?'green':'amber')}</span><a class="global-state-item" href="#network">${icon('ethernet')}${pill(source,fresh&&f.active==='wired'?'green':'blue')}</a><span class="global-state-item global-registration">${pill(r.sim_ready?(r.technology||'已注册'):'移动网络待就绪',r.sim_ready?'':'amber')}</span><a class="global-state-item" href="#network">${pill(internet,fresh&&f.cellular_healthy?'green':'amber')}</a><span class="global-state-item">${pill(vpn,fresh&&health?'green':'amber')}</span><span class="global-time" title="${s.last_modem_success?dateText(s.last_modem_success):'尚无成功读取记录'}">模块最近读取 ${s.last_modem_success&&new Date(s.last_modem_success).getFullYear()>2000?clockLabel(s.last_modem_success):'—'}</span>`;
+ const active=s.calls.filter(c=>c.state_code!==7).sort((a,b)=>(a.state_code===3?-1:b.state_code===3?1:0));
+ const bar=$('#global-calls');bar.hidden=active.length===0;
+ if(active.length){const c=active[0];bar.innerHTML=`<span class="global-call-icon">${icon('phone')}</span><div class="global-call-info"><strong>${esc(c.state)} · ${esc(c.number||'未知号码')}</strong><small>${c.direction==='incoming'?'呼入':'呼出'}${active.length>1?` · 另有 ${active.length-1} 个呼叫`:''} · 本版仅提供呼叫控制</small></div><a class="button secondary call-details" href="#calls">查看详情</a>${c.state_code===3&&c.direction==='incoming'?`<button class="button primary" data-call="${c.id}" data-action="accept" ${!s.call_allowed||state.busy?'disabled':''}>接听</button>`:''}<button class="button danger" data-call="${c.id}" data-action="hangup" ${state.busy?'disabled':''}>${c.state_code===3?'拒接':'挂断'}</button>`;}
+}
+function render(force=false){
  if(!state.logged)return;
  document.querySelectorAll('[data-view]').forEach(e=>e.classList.toggle('active',e.dataset.view===state.view));
  $('#breadcrumb-page').textContent=titles[state.view];
  if(!state.status){$('#main').innerHTML=empty('radio','正在连接设备','请稍候，正在读取网络与短信状态。');return;}
- const focus=document.activeElement,id=focus?.id,start=focus?.selectionStart,end=focus?.selectionEnd;
- $('#main').innerHTML=(state.status.error?`<div class="error-banner">${esc(state.status.error)}</div>`:'')+({overview,inbox,calls}[state.view])();
- const n=state.messages.filter(m=>!m.read).length;$('#nav-unread').textContent=n;$('#nav-unread').hidden=n===0;
+ renderGlobal();
+ const n=state.status.unread_count;$('#nav-unread').textContent=n;$('#nav-unread').hidden=n===0;
  const incoming=state.status.calls.filter(c=>c.state_code===3).length;$('#nav-calls').textContent=incoming;$('#nav-calls').hidden=incoming===0;
- $('#sidebar-network').textContent=state.status.failover.active==='wired'?'有线主用 · 蜂窝备用':'蜂窝接管 · 网络保护';
- $('#demo-badge').hidden=!state.status.demo;
+ $('#sidebar-network').textContent=!state.status.network.fresh?'主备状态待确认':state.status.failover.active==='wired'?'有线主用 · 蜂窝备用':'蜂窝接管 · 网络保护';
+ $('#demo-badge').hidden=!state.status.demo;$('#app-version').textContent='v'+state.status.version;
  $('#footer-update').textContent=`最近同步 ${dateText(state.status.updated)} · 每 5 秒自动更新`;
+ const key=state.view==='inbox'?JSON.stringify([state.view,state.status.error,state.status.radio.present,state.conversations,state.detail,state.search,state.unread]):'';
+ if(!force&&key&&key===state.viewKey)return;state.viewKey=key;
+ const focus=document.activeElement,id=focus?.id,start=focus?.selectionStart,end=focus?.selectionEnd;
+ const scroller=$('.conversation-messages'),scrollInfo=scroller?{id:scroller.dataset.threadId,top:scroller.scrollTop,bottom:scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<30}:null;
+ $('#main').innerHTML=(state.status.error?`<div class="error-banner">${esc(state.status.error)}</div>`:'')+({overview,network:networkView,inbox,calls}[state.view])();
+ const next=$('.conversation-messages');if(next){if(scrollInfo&&scrollInfo.id===state.selected&&!scrollInfo.bottom)next.scrollTop=scrollInfo.top;else next.scrollTop=next.scrollHeight;}
  if(id){const input=document.getElementById(id);if(input&&(id==='phone'||id==='search')){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}}
 }
-async function sync(){if(!state.logged||polling)return;polling=true;try{const [s,m]=await Promise.all([api('/api/status'),api('/api/messages')]);state.status=s;state.messages=m;$('#sync-label').textContent='实时同步';render();}catch(e){if(state.logged){$('#sync-label').textContent='连接暂时中断';}}finally{polling=false;}}
-async function markRead(id){const m=state.messages.find(m=>m.id===id);if(!m||m.read)return;try{await api(`/api/messages/${id}/read`,'POST');m.read=true;render();}catch(e){toast(e.message,true);}}
-async function action(id,type){if(state.busy)return;state.busy=true;render();try{await api(`/api/calls/${id}/${type}`,'POST');toast(type==='accept'?'已提交接听操作':'已提交挂断操作');await sync();}catch(e){toast(e.message,true);}finally{state.busy=false;render();}}
+async function sync(){
+ if(!state.logged||polling)return;polling=true;const epoch=state.authEpoch;
+ try{const s=await api('/api/status');if(!state.logged||epoch!==state.authEpoch)return;if(!state.status||new Date(s.updated)>=new Date(state.status.updated))state.status=s;if(state.view==='inbox')await loadConversations(false);$('#sync-label').textContent='实时同步';render();}
+ catch(e){if(state.logged){$('#sync-label').textContent='连接暂时中断';if(state.status){state.status.network.fresh=false;state.status.call_allowed=false;state.status.call_block_reason='无法确认网络状态，通话控制暂时锁定';state.status.error='与 69 的连接暂时中断，正在显示上次同步的数据';render();}}}
+ finally{polling=false;}
+}
+async function copyText(text){
+ try{if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(text);else{const t=document.createElement('textarea');t.value=text;document.body.appendChild(t);t.select();const ok=document.execCommand('copy');t.remove();if(!ok)throw new Error('copy failed');}toast('已复制到剪贴板');}catch{toast('复制失败，请手动选择内容',true);}
+}
+async function action(id,type){if(state.busy)return;state.busy=true;render();try{await api(`/api/calls/${id}/${type}`,'POST');toast(type==='accept'?'已提交接听操作':'已提交挂断操作');const next=await api('/api/status');if(state.logged&&(!state.status||new Date(next.updated)>=new Date(state.status.updated)))state.status=next;}catch(e){toast(e.message,true);}finally{state.busy=false;render();}}
 document.addEventListener('click',async e=>{
- const message=e.target.closest('[data-message]');if(message){state.selected=message.dataset.message;render();await markRead(state.selected);return;}
- const filter=e.target.closest('[data-filter]');if(filter){state.unread=filter.dataset.filter==='unread';render();return;}
+ const conversation=e.target.closest('[data-conversation]');if(conversation){state.selected=conversation.dataset.conversation;try{await loadConversations(true);render();}catch(err){toast(err.message,true);}return;}
+ const filter=e.target.closest('[data-filter]');if(filter){state.unread=filter.dataset.filter==='unread';try{await loadConversations(false);render();}catch(err){toast(err.message,true);}return;}
+ if(e.target.closest('#read-conversation')){try{await readConversation(state.selected);render();}catch(err){toast(err.message,true);}return;}
+ const copy=e.target.closest('[data-copy-message]');if(copy){const m=state.detail?.messages.find(m=>m.id===copy.dataset.copyMessage);if(m)await copyText(m.text);return;}
+ if(e.target.closest('#copy-diagnostics')){await copyText(diagnosticSummary());return;}
  const key=e.target.closest('[data-key]');if(key){if(key.dataset.key==='⌫')state.phone=state.phone.slice(0,-1);else if(state.phone.length<28)state.phone+=key.dataset.key;const input=$('#phone');input.value=state.phone;input.focus();return;}
  const call=e.target.closest('[data-call]');if(call){await action(call.dataset.call,call.dataset.action);return;}
  if(e.target.closest('#dial')){const cleaned=state.phone.replace(/[ ()-]/g,'');if(!/^\+?[0-9]{7,20}$/.test(cleaned)){toast('请输入 7–20 位电话号码，可使用 + 国际区号',true);$('#phone').focus();return;}$('#confirm-number').textContent=cleaned;$('#dial-dialog').showModal();}
- if(e.target.closest('#mark-read'))await markRead(state.selected);
- if(e.target.closest('#copy-message')){const text=state.messages.find(m=>m.id===state.selected)?.text;if(text){try{if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(text);else{const t=document.createElement('textarea');t.value=text;document.body.appendChild(t);t.select();if(!document.execCommand('copy'))throw new Error('copy failed');t.remove();}toast('短信内容已复制');}catch{toast('复制失败，请手动选择短信内容',true);}}}
 });
-document.addEventListener('keydown',e=>{const m=e.target.closest('[data-message]');if(m&&(e.key==='Enter'||e.key===' ')){e.preventDefault();m.click();}});
-document.addEventListener('input',e=>{if(e.target.id==='search'){state.search=e.target.value;render();}if(e.target.id==='phone')state.phone=e.target.value;});
+let searchTimer;
+document.addEventListener('input',e=>{if(e.target.id==='search'){state.search=e.target.value;clearTimeout(searchTimer);searchTimer=setTimeout(async()=>{try{await loadConversations(false);render();}catch(err){toast(err.message,true);}},200);}if(e.target.id==='phone')state.phone=e.target.value;});
 $('#cancel-dial').addEventListener('click',()=>$('#dial-dialog').close());
-$('#confirm-dial').addEventListener('click',async()=>{if(state.busy)return;const number=$('#confirm-number').textContent;$('#dial-dialog').close();state.busy=true;render();try{await api('/api/calls','POST',{number});toast('拨号请求已提交');state.phone='';await sync();}catch(e){toast(e.message,true);}finally{state.busy=false;render();}});
+$('#confirm-dial').addEventListener('click',async()=>{if(state.busy)return;const number=$('#confirm-number').textContent;$('#dial-dialog').close();state.busy=true;render();try{await api('/api/calls','POST',{number});toast('拨号请求已提交');state.phone='';const next=await api('/api/status');if(state.logged&&(!state.status||new Date(next.updated)>=new Date(state.status.updated)))state.status=next;}catch(e){toast(e.message,true);}finally{state.busy=false;render();}});
 $('#login-form').addEventListener('submit',async e=>{e.preventDefault();const button=$('#login-submit');button.disabled=true;$('#login-error').textContent='';try{const s=await api('/api/login','POST',{username:$('#username').value.trim(),password:$('#password').value});state.csrf=s.csrf;$('#password').value='';showApp();await sync();}catch(e){$('#login-error').textContent=e.message;}finally{button.disabled=false;}});
 $('#logout').addEventListener('click',async()=>{try{await api('/api/logout','POST');}catch{}showLogin();});
 $('#refresh').addEventListener('click',()=>sync());
-function changeView(){state.view=Object.hasOwn(titles,location.hash.slice(1))?location.hash.slice(1):'overview';render();}
+function changeView(){state.view=Object.hasOwn(titles,location.hash.slice(1))?location.hash.slice(1):'overview';state.viewKey='';render();if(state.logged&&state.view==='inbox')loadConversations(true).then(()=>render()).catch(e=>toast(e.message,true));}
 window.addEventListener('hashchange',changeView);
 icons();changeView();
 (async()=>{try{const s=await api('/api/session');state.csrf=s.csrf;showApp();await sync();}catch{showLogin();}})();

@@ -1,4 +1,4 @@
-EC20 Console 1.0.0
+EC20 Toolbox 1.1.0
 =================
 
 已部署到 operator@192.0.2.10（ec20-host）。
@@ -83,7 +83,7 @@ previous 符号链接保留上一个版本，可在需要时切回后重启本�
 
 验证摘要
 --------
-- 7 项 Go 测试及 race 检查通过，覆盖鉴权、CSRF、保护状态新鲜度、模拟通话、短信归档去重、跨模块隔离、独立子对象读取和登录限流。
+- 12 项 Go 测试及 race 检查通过，覆盖鉴权、CSRF、保护状态新鲜度、模拟通话、短信归档去重、跨模块隔离、独立子对象读取和登录限流。
 - 桌面与手机布局、短信搜索、已读、模拟接听/挂断/拨号确认经过浏览器验证。
 - 真实 ModemManager 读取到 2 条已有短信并归档；未修改这些短信的原始存储或已读标志。
 - 实拨进入“通话中”，随后通过 Web API 挂断；独立 mmcli 校验没有遗留通话。
@@ -96,3 +96,23 @@ previous 符号链接保留上一个版本，可在需要时切回后重启本�
   https://www.freedesktop.org/software/ModemManager/api/latest/ref-dbus.html
   https://www.freedesktop.org/software/ModemManager/api/latest/gdbus-org.freedesktop.ModemManager1.Modem.Voice.html
   https://www.freedesktop.org/software/ModemManager/api/latest/gdbus-org.freedesktop.ModemManager1.Sms.html
+
+1.1.0 新增（2026-11-06）
+----------------------
+- 短信改为按号码归并的会话列表、按日期展示的消息气泡、会话搜索与高亮、会话批量已读。
+- +86 / 0086 / 中国大陆手机号本地写法归入同一会话，保留原始发送方号码；短服务号不会被误归并。
+- 新增网络诊断页，读取现有主备配置、恢复倒计时、VPN 状态与 sysfs 接口计数。
+- 展示接收/发送速率和最近 60 个采样点；接口累计值会在接口重建时重置，不表示套餐余额。
+- 切换记录保存在 /var/lib/ec20-console/network-history.json，原因标注为根据状态推断；首次运行不会补造旧切换原因。
+- 新增所有页面可见的设备/网络状态条和当前呼叫条，可在短信或诊断页直接接听、拒接与挂断。
+- 原 inbox.json 格式、现有登录文件、端口及 systemd 服务名称保持兼容。
+- 网络诊断只读现有配置与接口计数，不运行额外探测、不改路由、不触发拨号或模块重启。
+- 代码仓库：/path/to/ec20-toolbox；Go module 为 github.com/kongfei605/ec20-toolbox。
+- Git 仅本地管理，没有自动创建 GitHub 仓库或推送。
+
+开发命令
+--------
+  make test
+  make build
+构建产物为 bin/ec20-console-linux-amd64。现有服务路径和部署脚本继续沿用 ec20-console 名称，以兼容原安装。
+仓库忽略 .local/、demo-credentials.json、demo-data/、credentials.json 与二进制，不提交生产凭据或短信数据。

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -25,7 +26,7 @@ import (
 //go:embed web/*
 var assets embed.FS
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 type credentials struct {
 	Username string `json:"username"`
@@ -53,12 +54,28 @@ type App struct {
 	snapshot     Snapshot
 	sessions     map[string]session
 	limits       map[string]loginLimit
+	network      *NetworkMonitor
 }
 
 func newApp(backend Backend, inbox *Inbox, creds credentials, failoverPath string, demo bool) *App {
-	return &App{backend: backend, inbox: inbox, password: sha256.Sum256([]byte(creds.Password)), username: creds.Username,
+	a := &App{backend: backend, inbox: inbox, password: sha256.Sum256([]byte(creds.Password)), username: creds.Username,
 		failoverPath: failoverPath, demo: demo, sessions: map[string]session{}, limits: map[string]loginLimit{},
-		snapshot: Snapshot{Calls: []Call{}, Events: []Event{}, Version: version, Demo: demo}}
+		snapshot: Snapshot{Calls: []Call{}, Events: []Event{}, Version: version, Demo: demo, Network: NetworkStatus{Config: defaultNetworkConfig(), Interfaces: []InterfaceStats{}, Samples: []TrafficSample{}, Events: []NetworkEvent{}}}}
+	a.network = newNetworkMonitor(filepath.Dir(inbox.path), "/etc/ec20-failover.json")
+	if demo {
+		start := time.Now()
+		a.network.read = func(name string) (counterReading, error) {
+			elapsed := time.Since(start).Seconds()
+			base := uint64(1)
+			scale := float64(1)
+			if name == "ppp0" {
+				base = 2
+				scale = .02
+			}
+			return counterReading{Index: base, RX: uint64(2e7*scale + elapsed*76000*scale), TX: uint64(5e6*scale + elapsed*18000*scale), Up: true}, nil
+		}
+	}
+	return a
 }
 
 func (a *App) failover() (Failover, error) {
@@ -94,6 +111,10 @@ func (a *App) poll(ctx context.Context) {
 	defer cancel()
 	r, m, c, err := a.backend.Snapshot(ctx)
 	f, fe := a.failover()
+	netStatus := a.network.Collect(f, fe == nil, time.Now().UTC())
+	if a.demo {
+		netStatus.ConfigReadable = true
+	}
 	problem := ""
 	if err != nil {
 		problem = "暂时无法读取调制解调器"
@@ -111,19 +132,17 @@ func (a *App) poll(ctx context.Context) {
 	if fe != nil {
 		problem = "自动备用网络状态不可用，通话控制已锁定"
 	}
-	items := a.inbox.List()
-	unread := 0
-	for _, m := range items {
-		if !m.Read {
-			unread++
-		}
-	}
+	messageCount, unread := a.inbox.Counts()
 	if c == nil {
 		c = []Call{}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	previous := a.snapshot
+	lastSuccess := previous.LastModemSuccess
+	if err == nil && r.Present {
+		lastSuccess = time.Now().UTC()
+	}
 	events := append([]Event{}, previous.Events...)
 	add := func(kind, text string) {
 		events = append([]Event{{Time: time.Now().UTC(), Kind: kind, Text: text}}, events...)
@@ -156,8 +175,17 @@ func (a *App) poll(ctx context.Context) {
 	if err != nil {
 		reason = "调制解调器状态暂时不可用"
 	}
-	a.snapshot = Snapshot{Radio: r, Failover: f, Calls: c, Events: events, MessageCount: len(items), UnreadCount: unread,
-		CallAllowed: reason == "", CallBlockReason: reason, Error: problem, Updated: time.Now().UTC(), Version: version, Demo: a.demo}
+	a.snapshot = Snapshot{Radio: r, Failover: f, Calls: c, Events: events, MessageCount: messageCount, UnreadCount: unread,
+		CallAllowed: reason == "", CallBlockReason: reason, Error: problem, Updated: time.Now().UTC(), Version: version, Demo: a.demo,
+		LastModemSuccess: lastSuccess, Network: netStatus}
+}
+
+func (a *App) refreshInboxCounts() {
+	count, unread := a.inbox.Counts()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.snapshot.MessageCount = count
+	a.snapshot.UnreadCount = unread
 }
 
 func (a *App) background(ctx context.Context) {
@@ -388,6 +416,36 @@ func (a *App) handler() http.Handler {
 	}))
 	mux.HandleFunc("GET /api/status", a.protected(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.state()) }))
 	mux.HandleFunc("GET /api/messages", a.protected(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.inbox.List()) }))
+	mux.HandleFunc("GET /api/conversations", a.protected(func(w http.ResponseWriter, r *http.Request) {
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
+		if len(query) > 600 {
+			apiError(w, 400, "搜索内容过长")
+			return
+		}
+		writeJSON(w, 200, a.inbox.Conversations(query, r.URL.Query().Get("unread") == "1"))
+	}))
+	mux.HandleFunc("GET /api/conversations/{id}", a.protected(func(w http.ResponseWriter, r *http.Request) {
+		d, err := a.inbox.Conversation(r.PathValue("id"))
+		if err != nil {
+			apiError(w, 404, "会话不存在")
+			return
+		}
+		writeJSON(w, 200, d)
+	}))
+	mux.HandleFunc("POST /api/conversations/{id}/read", a.protected(func(w http.ResponseWriter, r *http.Request) {
+		err := a.inbox.MarkConversationRead(r.PathValue("id"))
+		if errors.Is(err, os.ErrNotExist) {
+			apiError(w, 404, "会话不存在")
+			return
+		}
+		if err != nil {
+			apiError(w, 500, "保存已读状态失败")
+			return
+		}
+		a.refreshInboxCounts()
+		count, unread := a.inbox.Counts()
+		writeJSON(w, 200, map[string]any{"ok": true, "message_count": count, "unread_count": unread})
+	}))
 	mux.HandleFunc("POST /api/messages/{id}/read", a.protected(func(w http.ResponseWriter, r *http.Request) {
 		err := a.inbox.MarkRead(r.PathValue("id"))
 		if errors.Is(err, os.ErrNotExist) {
@@ -398,6 +456,7 @@ func (a *App) handler() http.Handler {
 			apiError(w, 500, "保存已读状态失败")
 			return
 		}
+		a.refreshInboxCounts()
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	}))
 	mux.HandleFunc("POST /api/calls", a.protected(a.voiceAction))

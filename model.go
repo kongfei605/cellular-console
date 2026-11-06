@@ -14,17 +14,21 @@ import (
 )
 
 type Failover struct {
-	Active          string          `json:"active"`
-	WiredHealthy    bool            `json:"wired_healthy"`
-	WiredIP         string          `json:"wired_ip"`
-	WiredGateway    string          `json:"wired_gateway"`
-	CellularIP      string          `json:"cellular_ip"`
-	CellularPresent bool            `json:"cellular_present"`
-	CellularHealthy bool            `json:"cellular_healthy"`
-	ConnectionState string          `json:"cellular_connection_state"`
-	VPNs            map[string]bool `json:"vpns"`
-	Updated         string          `json:"updated"`
-	LastSwitch      string          `json:"last_switch"`
+	Active               string          `json:"active"`
+	WiredHealthy         bool            `json:"wired_healthy"`
+	WiredIP              string          `json:"wired_ip"`
+	WiredGateway         string          `json:"wired_gateway"`
+	CellularIP           string          `json:"cellular_ip"`
+	CellularPresent      bool            `json:"cellular_present"`
+	CellularHealthy      bool            `json:"cellular_healthy"`
+	ConnectionState      string          `json:"cellular_connection_state"`
+	VPNs                 map[string]bool `json:"vpns"`
+	Updated              string          `json:"updated"`
+	LastSwitch           string          `json:"last_switch"`
+	WiredLink            bool            `json:"wired_link"`
+	WiredFailures        int             `json:"wired_failures"`
+	WiredRecoverySeconds float64         `json:"wired_recovery_seconds"`
+	DialAttempts         int             `json:"cellular_dial_attempts"`
 }
 
 func readFailover(path string) (Failover, error) {
@@ -86,18 +90,20 @@ type Event struct {
 }
 
 type Snapshot struct {
-	Radio           Radio     `json:"radio"`
-	Failover        Failover  `json:"failover"`
-	Calls           []Call    `json:"calls"`
-	Events          []Event   `json:"events"`
-	MessageCount    int       `json:"message_count"`
-	UnreadCount     int       `json:"unread_count"`
-	CallAllowed     bool      `json:"call_allowed"`
-	CallBlockReason string    `json:"call_block_reason"`
-	Error           string    `json:"error,omitempty"`
-	Updated         time.Time `json:"updated"`
-	Demo            bool      `json:"demo"`
-	Version         string    `json:"version"`
+	Radio            Radio         `json:"radio"`
+	Failover         Failover      `json:"failover"`
+	Calls            []Call        `json:"calls"`
+	Events           []Event       `json:"events"`
+	MessageCount     int           `json:"message_count"`
+	UnreadCount      int           `json:"unread_count"`
+	CallAllowed      bool          `json:"call_allowed"`
+	CallBlockReason  string        `json:"call_block_reason"`
+	Error            string        `json:"error,omitempty"`
+	Updated          time.Time     `json:"updated"`
+	Demo             bool          `json:"demo"`
+	Version          string        `json:"version"`
+	LastModemSuccess time.Time     `json:"last_modem_success"`
+	Network          NetworkStatus `json:"network"`
 }
 
 type Inbox struct {
@@ -162,6 +168,18 @@ func (s *Inbox) listLocked() []Message {
 }
 
 func (s *Inbox) List() []Message { s.mu.Lock(); defer s.mu.Unlock(); return s.listLocked() }
+
+func (s *Inbox) Counts() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unread := 0
+	for _, m := range s.items {
+		if !m.Read {
+			unread++
+		}
+	}
+	return len(s.items), unread
+}
 
 func (s *Inbox) saveLocked() error {
 	f, err := os.CreateTemp(filepath.Dir(s.path), ".inbox-*")

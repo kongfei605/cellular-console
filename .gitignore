@@ -3,3 +3,7 @@ demo-credentials.json
 demo-data/
 *.test
 __pycache__/
+
+.local/
+bin/
+credentials.json

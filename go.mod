@@ -1,4 +1,4 @@
-module ec20-console
+module github.com/kongfei605/ec20-toolbox
 
 go 1.26.0
 
