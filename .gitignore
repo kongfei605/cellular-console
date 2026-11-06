@@ -1,0 +1,5 @@
+ec20-console-linux-amd64
+demo-credentials.json
+demo-data/
+*.test
+__pycache__/

@@ -1,0 +1,98 @@
+EC20 Console 1.0.0
+=================
+
+已部署到 operator@192.0.2.10（ec20-host）。
+访问：http://192.0.2.10:8787/（通过当前 VPN 网络）
+用户名：admin
+
+首次获取管理密码，在自己的终端执行：
+  ssh -i ~/.ssh/example.pem operator@192.0.2.10 'sudo cat /etc/ec20-console/credentials.json'
+
+密码仅保存在 69 本机的受限文件内；源码和交付包不包含生产密码、短信内容或 SIM 密钥。
+
+功能
+----
+1. 状态监控：型号、固件、运营商、LTE、信号、SIM、主备出口、VPN、设备动态，每 5 秒同步。
+2. 短信收件箱：接收中的完整文本短信自动归档到 69，本地搜索、查看、复制和已读状态；设备拔出或应用重启后保留归档。
+3. 呼叫控制：拨号确认、来电显示、接听、拒接、挂断及当前呼叫状态。
+4. 网络保护：只在有线主用且健康、设备和 SIM 就绪、自动主备状态新鲜时开放拨号和接听；EC20 承载备用网络时锁定这些操作。挂断不受此保护限制。
+5. 登录保护：随机管理密码、HttpOnly / SameSite 会话、8 小时有效期、CSRF 与来源校验、登录频率限制。
+
+本版尚未接入浏览器双向音频；能拨号、接听不等于可以直接用网页麦克风和扬声器通话。
+本版没有发送短信、删除 SIM 短信、修改 APN、重置模块或断开数据连接的界面。
+通话接听经过模拟设备验证；真实呼出已使用用户指定的尾号 5616 号码验证接通和挂断。
+没有进行真实来电接听测试，也没有向任何号码发送测试短信。
+
+与自动备用网络的关系
+------------------
+- Go 直接使用 ModemManager 的系统 D-Bus API；不打开 ttyUSB 串口，不启动另一套 PPP。
+- 原 ec20-failover、NetworkManager、ModemManager、OpenVPN 的服务配置和拨号配置保持不变。
+- 控制台独立运行、独立重启；主备切换不依赖 Web 页面或此 Go 进程。
+- 服务以 ec20-console 专用非 root 账户运行，只有 ModemManager Voice 授权；不具备 Device.Control、网络管理或固件操作权限。
+- HTTP 仅监听 192.0.2.10:8787。访问依赖 VPN；没有配置公网端口映射。
+- 本版使用 VPN 内 HTTP。若以后向公网提供服务，需要另行配置 HTTPS 和访问控制。
+- 通话保护会阻止蜂窝主用时新发起或接听电话；已经建立的通话不会被应用因出口变化而主动挂断。
+
+文件与服务
+----------
+主程序：/opt/ec20-console/current/ec20-console
+版本目录：/opt/ec20-console/releases/<SHA256 前 16 位>/
+服务：/etc/systemd/system/ec20-console.service
+最小授权规则：/etc/polkit-1/rules.d/49-ec20-console.rules
+登录凭据：/etc/ec20-console/credentials.json（root / ec20-console，0640）
+短信归档：/var/lib/ec20-console/inbox.json（0600）
+原主备状态：/run/ec20-failover/status.json（只读）
+
+查看服务：
+  sudo systemctl status ec20-console --no-pager
+查看日志：
+  sudo journalctl -u ec20-console -f
+重启本应用：
+  sudo systemctl restart ec20-console
+停用本应用：
+  sudo systemctl disable --now ec20-console
+停用后短信归档和登录文件保留，现有自动备用网络继续运行。
+停止 Web 服务不会自动挂断已建立的电话；请先通过界面挂断再停服务。
+
+修改密码：
+  sudoedit /etc/ec20-console/credentials.json
+  sudo systemctl restart ec20-console
+密码至少 12 个字符，建议继续使用随机强密码；重启会使既有 Web 登录会话失效。
+
+后续更新
+--------
+用相同架构构建新二进制，上传到临时目录，再运行 deploy/update.py。
+更新程序按二进制哈希创建版本目录，原子切换 current 并仅重启 ec20-console。
+previous 符号链接保留上一个版本，可在需要时切回后重启本应用。
+
+构建与测试
+----------
+构建工具：Go 1.26.8；输出 Linux amd64 静态二进制，CGO_ENABLED=0。
+依赖：github.com/godbus/dbus/v5 v5.2.4，以及 golang.org/x/sys v0.27.0。
+可在有 Go 工具链的开发机上执行：
+  go test -race ./...
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o ec20-console-linux-amd64 .
+网络无法访问官方 Go 模块代理时，可配置：
+  GOPROXY=https://goproxy.cn,direct
+依赖完整性由 go.sum 校验。
+
+运行独立演示（不会访问硬件，只允许监听 127.0.0.1）：
+  创建仅用于演示的 credentials.json，内容含 username 和至少 12 字符的 password。
+  go run . -demo -listen 127.0.0.1:18787 -credentials credentials.json -data-dir ./demo-data
+不要将生产凭据复制到演示环境。
+
+验证摘要
+--------
+- 7 项 Go 测试及 race 检查通过，覆盖鉴权、CSRF、保护状态新鲜度、模拟通话、短信归档去重、跨模块隔离、独立子对象读取和登录限流。
+- 桌面与手机布局、短信搜索、已读、模拟接听/挂断/拨号确认经过浏览器验证。
+- 真实 ModemManager 读取到 2 条已有短信并归档；未修改这些短信的原始存储或已读标志。
+- 实拨进入“通话中”，随后通过 Web API 挂断；独立 mmcli 校验没有遗留通话。
+- 原主备程序、主备配置和 EC20 拨号配置哈希一致。
+- 真实部署与呼叫期间两段持续 SSH 测试分别收到 180/180、120/120 次心跳，退出码均为 0。
+- 安装时设置了仅停用新 Web 服务的超时回滚；成功后已解除。实拨设置了独立挂断保护，成功挂断后已清理定时器。
+
+依赖许可见 THIRD_PARTY_NOTICES.txt。
+接口参考：
+  https://www.freedesktop.org/software/ModemManager/api/latest/ref-dbus.html
+  https://www.freedesktop.org/software/ModemManager/api/latest/gdbus-org.freedesktop.ModemManager1.Modem.Voice.html
+  https://www.freedesktop.org/software/ModemManager/api/latest/gdbus-org.freedesktop.ModemManager1.Sms.html
