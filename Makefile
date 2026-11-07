@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: test build build-audio build-uac-ready fmt
+.PHONY: test build build-audio build-uac-ready build-gnss fmt
 
 test:
 	$(GO) test -race ./...
@@ -17,3 +17,6 @@ build-uac-ready:
 
 fmt:
 	$(GO) fmt ./...
+
+build-gnss:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags='-s -w' -o bin/ec20-gnss-broker-linux-amd64 ./cmd/ec20-gnss-broker

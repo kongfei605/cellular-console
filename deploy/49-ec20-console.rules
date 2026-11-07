@@ -1,8 +1,8 @@
 // Voice, Messaging and Location are ModemManager's coarse authorizations. The application
 // only exposes SMS Create/Send/state and voice control, never SMS deletion or
-// storage changes. Location is limited to authenticated reads and guarded GPS raw/NMEA
-// setup, preserving other sources and SignalsLocation. No Device.Control/network/
-// firmware privileges are granted.
+// storage changes. Location is used only for authenticated reads; GNSS Setup is
+// isolated behind a local, peer-checked broker. The console user is never granted
+// Device.Control/network/firmware privileges.
 polkit.addRule(function(action, subject) {
     if (subject.user === "ec20-console" &&
         (action.id === "org.freedesktop.ModemManager1.Voice" ||

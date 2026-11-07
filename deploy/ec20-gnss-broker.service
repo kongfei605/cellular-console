@@ -1,0 +1,25 @@
+[Unit]
+Description=EC20 narrowly scoped GNSS privilege broker
+Requires=ec20-gnss-broker.socket
+After=ec20-gnss-broker.socket ModemManager.service
+[Service]
+ExecStart=/opt/ec20-gnss-broker/current/ec20-gnss-broker -device-id 0000000000000000000000000000000000000000
+User=root
+Group=ec20-console
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+IPAddressDeny=any
+MemoryMax=64M
+TasksMax=32
+UMask=0077

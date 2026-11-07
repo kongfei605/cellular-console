@@ -1,0 +1,10 @@
+[Unit]
+Description=EC20 GNSS-only local control socket
+[Socket]
+ListenStream=/run/ec20-gnss-control.sock
+SocketUser=root
+SocketGroup=ec20-console
+SocketMode=0660
+RemoveOnStop=true
+[Install]
+WantedBy=sockets.target

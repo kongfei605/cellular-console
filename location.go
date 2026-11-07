@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -333,7 +337,7 @@ func (b *ModemBackend) ReadLocation(ctx context.Context) (LocationStatus, error)
 	return s, nil
 }
 func (b *ModemBackend) SetGNSS(ctx context.Context, on bool) (LocationStatus, error) {
-	obj, s, e := b.locationObject(ctx)
+	_, s, e := b.locationObject(ctx)
 	if e != nil {
 		return s, e
 	}
@@ -342,11 +346,36 @@ func (b *ModemBackend) SetGNSS(ctx context.Context, on bool) (LocationStatus, er
 		return s, e
 	}
 	if next != s.EnabledSources {
-		if e = obj.CallWithContext(ctx, locationIF+".Setup", dbus.FlagNoAutoStart, next, s.Signals).Err; e != nil {
+		if e = requestGNSSBroker(ctx, on, next); e != nil {
 			return s, e
 		}
 	}
 	return b.ReadLocation(ctx)
+}
+func requestGNSSBroker(ctx context.Context, on bool, expected uint32) error {
+	transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", "/run/ec20-gnss-control.sock")
+	}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	body, _ := json.Marshal(map[string]bool{"enabled": on})
+	r, e := http.NewRequestWithContext(ctx, "POST", "http://gnss.local/gnss", bytes.NewReader(body))
+	if e != nil {
+		return e
+	}
+	r.Header.Set("Content-Type", "application/json")
+	response, e := client.Do(r)
+	if e != nil {
+		return errors.New("GNSS本机代理不可用")
+	}
+	defer response.Body.Close()
+	var result struct {
+		Sources uint32 `json:"enabled_sources"`
+	}
+	if response.StatusCode != 200 || json.NewDecoder(io.LimitReader(response.Body, 1024)).Decode(&result) != nil || result.Sources != expected {
+		return errors.New("GNSS本机代理未确认设置")
+	}
+	return nil
 }
 func gnssSources(s LocationStatus, on bool) (uint32, error) {
 	if !s.Available {

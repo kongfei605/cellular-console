@@ -3,7 +3,7 @@
 import datetime,hashlib,http.cookiejar,json,os,shlex,shutil,ssl,subprocess,sys,time,urllib.request
 from pathlib import Path
 STAGE=Path(__file__).resolve().parent
-BACKUP=Path('/var/lib/ec20-console/backups/gnss-20261107')
+BACKUP=Path('/var/lib/ec20-console/backups/gnss-broker-20261107')
 ORIGIN='https://192.0.2.10:8788'
 DEST='org.freedesktop.ModemManager1';OBJ='/org/freedesktop/ModemManager1/Modem/0';LOC=DEST+'.Modem.Location'
 UNIT=Path('/etc/systemd/system/ec20-console.service');RULE=Path('/etc/polkit-1/rules.d/49-ec20-console.rules')
@@ -33,7 +33,12 @@ def rollback():
   assert int(prop(LOC,'Enabled')) in [before['enabled'],before['enabled']|6] and prop(LOC,'SignalsLocation')=='false','external location settings changed; GNSS restoration not attempted'
   cmd('busctl','--timeout=25','call',before['owner'],OBJ,LOC,'Setup','ub',str(before['enabled']),'true' if before['signals'] else 'false',timeout=28)
  except Exception as e:problem=str(e)
+ subprocess.run(['systemctl','stop','ec20-gnss-broker.socket','ec20-gnss-broker.service'],check=True)
+ subprocess.run(['systemctl','disable','ec20-gnss-broker.socket'],check=True)
  for target,name in [(UNIT,'ec20-console.service'),(RULE,'49-ec20-console.rules')]:shutil.copyfile(BACKUP/name,target);os.chmod(target,0o644)
+ for n in ['ec20-gnss-broker.service','ec20-gnss-broker.socket']:
+  p=Path('/etc/systemd/system')/n
+  if p.exists():p.unlink()
  link(Path('/opt/ec20-console/current'),before['release'])
  subprocess.run(['systemctl','daemon-reload'],check=True);subprocess.run(['systemctl','start','ec20-console'],check=True)
  if problem:raise SystemExit('Web console restored; '+problem)
@@ -58,7 +63,8 @@ if __name__=='__main__':
  if '--rollback' in sys.argv:rollback();raise SystemExit(0)
  if '--check-only' in sys.argv:preflight();print('GNSS web upgrade preflight passed; no service changes');raise SystemExit(0)
  baseline=preflight()
- for n in ['ec20-console-linux-amd64','ec20-console.service','49-ec20-console.rules']:assert (STAGE/n).is_file(),n
+ assert not Path('/etc/systemd/system/ec20-gnss-broker.service').exists() and not Path('/run/ec20-gnss-control.sock').exists(),'GNSS broker already installed; use a reviewed update'
+ for n in ['ec20-console-linux-amd64','ec20-console.service','49-ec20-console.rules','ec20-gnss-broker-linux-amd64','ec20-gnss-broker.socket','ec20-gnss-broker.service']:assert (STAGE/n).is_file(),n
  BACKUP.mkdir(mode=0o700,parents=True,exist_ok=False)
  before={'release':str(Path('/opt/ec20-console/current').resolve()),'console_pid':cmd('systemctl','show','-p','MainPID','--value','ec20-console'),'owner':owner(),'device_id':prop(DEST+'.Modem','DeviceIdentifier'),'enabled':int(prop(LOC,'Enabled')),'signals':False,'baseline':baseline,'data_hashes':data_hashes(),'sms_paths':json.loads(cmd('mmcli','-m','0','--messaging-list-sms','-J'))['modem.messaging.sms']}
  for source in [UNIT,RULE]:shutil.copy2(source,BACKUP/source.name)
@@ -68,9 +74,14 @@ if __name__=='__main__':
  try:
   target=Path('/opt/ec20-console/releases')/sha(STAGE/'ec20-console-linux-amd64')[:16];target.mkdir(parents=True,exist_ok=True)
   shutil.copyfile(STAGE/'ec20-console-linux-amd64',target/'ec20-console');os.chmod(target/'ec20-console',0o755)
+  broker=Path('/opt/ec20-gnss-broker/releases')/sha(STAGE/'ec20-gnss-broker-linux-amd64')[:16];broker.mkdir(parents=True,exist_ok=True)
+  shutil.copyfile(STAGE/'ec20-gnss-broker-linux-amd64',broker/'ec20-gnss-broker');os.chmod(broker/'ec20-gnss-broker',0o755)
+  Path('/opt/ec20-gnss-broker').mkdir(parents=True,exist_ok=True);link(Path('/opt/ec20-gnss-broker/current'),broker)
+  for n in ['ec20-gnss-broker.socket','ec20-gnss-broker.service']:
+   p=Path('/etc/systemd/system')/n;shutil.copyfile(STAGE/n,p);os.chmod(p,0o644)
   for destination,name in [(UNIT,'ec20-console.service'),(RULE,'49-ec20-console.rules')]:shutil.copyfile(STAGE/name,destination);os.chmod(destination,0o644)
   link(Path('/opt/ec20-console/previous'),before['release']);link(Path('/opt/ec20-console/current'),target)
-  subprocess.run(['systemctl','daemon-reload'],check=True);subprocess.run(['systemctl','restart','ec20-console'],check=True)
+  subprocess.run(['systemctl','daemon-reload'],check=True);subprocess.run(['systemctl','enable','--now','ec20-gnss-broker.socket'],check=True);subprocess.run(['systemctl','restart','ec20-console'],check=True)
   network();assert state()==baseline,'protected state changed during upgrade'
  except Exception:
   rollback();subprocess.run(['systemctl','stop','ec20-gnss-web-rollback.timer'],check=True);raise
