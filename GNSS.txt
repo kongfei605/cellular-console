@@ -36,7 +36,8 @@ EC20 Toolbox — GNSS (v1.5.0)
   新增 Go 代理通过 /run/ec20-gnss-control.sock 提供唯一 POST /gnss 布尔开关。
   socket 权限 0660 root:ec20-console，SO_PEERCRED 再核验调用者 UID；无 TCP 监听。
   root 代理仅接受上述精确设备/固件/MM 版本、源掩码 1↔7、关闭广播的配置。
-  启用时独立复核有线、蜂窝、VPN、呼叫及短信；前后检查 PPP/USB 身份并核对 MM 实例。
+  启用时独立复核有线、蜂窝、VPN 及呼叫；前后检查 PPP/USB 身份并核对 MM 实例。
+  短信互斥由控制台处理；代理不读取控制台的私人短信存储，也不保留文件访问 capability。
   代理启动不操作模块；systemd 只允许 AF_UNIX 及用于只读接口检查的 AF_NETLINK，禁止 IP 联网，清空 Linux capabilities。
   不授予 Device.Control，不开放任意 AT、SUPL/XTRA 下载、定位注入、刷新率更改或 USB/网络设置。
   代理和控制台调用绑定现有 ModemManager 的唯一总线名称，不自动启动新进程，不打开串口。

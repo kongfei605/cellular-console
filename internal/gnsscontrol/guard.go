@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-type NetworkGuard struct{ Failover, Outbox string }
+type NetworkGuard struct{ Failover string }
 
 func (g NetworkGuard) Check() error {
 	var f struct {
@@ -62,24 +62,6 @@ func (g NetworkGuard) Check() error {
 	}
 	if _, e := os.ReadFile("/sys/bus/usb/devices/1-2/devnum"); e != nil {
 		return e
-	}
-	if g.Outbox != "" {
-		b, e := os.ReadFile(g.Outbox)
-		if e != nil && !os.IsNotExist(e) {
-			return e
-		}
-		if e == nil {
-			var records []struct{ Status string }
-			if e = json.Unmarshal(b, &records); e != nil {
-				return e
-			}
-			for _, v := range records {
-				switch v.Status {
-				case "pending", "creating", "ready", "submitting":
-					return errors.New("SMS active")
-				}
-			}
-		}
 	}
 	return nil
 }

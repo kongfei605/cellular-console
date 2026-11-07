@@ -58,7 +58,7 @@ func main() {
 		log.Fatal(e)
 	}
 	defer conn.Close()
-	handler := &gnsscontrol.Server{Driver: &gnsscontrol.Modem{Conn: conn, DeviceID: *device}, Guard: gnsscontrol.NetworkGuard{Failover: "/run/ec20-failover/status.json", Outbox: "/var/lib/ec20-console/outbox.json"}, DeviceID: *device}
+	handler := &gnsscontrol.Server{Driver: &gnsscontrol.Modem{Conn: conn, DeviceID: *device}, Guard: gnsscontrol.NetworkGuard{Failover: "/run/ec20-failover/status.json"}, DeviceID: *device}
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 3 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 2048}
 	log.Print("GNSS-only broker ready on local Unix socket; no automatic modem operation")
 	log.Fatal(server.Serve(peerListener{Listener: listener, uid: uint32(uid)}))

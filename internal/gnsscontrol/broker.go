@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -87,6 +88,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if *input.Enabled {
 		if e = s.Guard.Check(); e != nil {
+			log.Printf("GNSS network guard refused: %v", e)
 			fail(409)
 			return
 		}
