@@ -125,3 +125,10 @@ previous 符号链接保留上一个版本，可在需要时切回后重启本�
 测试音 20 秒自动停止；服务端每次最长 3 分钟、30 秒无媒体释放资源。
 独立 systemd 服务 ec20-audio-loopback，HTTPS 8788 / UDP 8789，仅监听 VPN 地址。
 不访问硬件、不改变主备路由、不重启原控制台。详细使用、证书、部署和回退见 AUDIO_LOOPBACK.txt。
+
+真实通话音频预备代码（2026-11-07，未上线启用）
+--------------------------------------------
+internal/voicepcm 与 audioloop.NewMediaWithPCM 已完成PCM/G.711、受保护ALSA管道和WebRTC双向桥的模拟验证。
+声卡识别绑定EC20 USB身份/物理端口，并核实8kHz单声道S16_LE双向能力；默认声卡不会作为替代。
+新增 make build-uac-ready，只读检查声卡是否就绪，不打开音频/串口设备或连接D-Bus。
+线上仍为既有软件回环版本。现场待办与范围限制见 UAC_READY_FOR_ONSITE.txt。

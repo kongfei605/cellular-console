@@ -1,0 +1,98 @@
+{
+  "reference": "Debian ffmpeg pcm_mulaw encoder, synthetic integer vectors; no audio device used",
+  "vectors": [
+    {
+      "pcm": -32768,
+      "pcmu": 0
+    },
+    {
+      "pcm": -32124,
+      "pcmu": 0
+    },
+    {
+      "pcm": -10000,
+      "pcmu": 28
+    },
+    {
+      "pcm": -1000,
+      "pcmu": 78
+    },
+    {
+      "pcm": -132,
+      "pcmu": 111
+    },
+    {
+      "pcm": -128,
+      "pcmu": 111
+    },
+    {
+      "pcm": -33,
+      "pcmu": 122
+    },
+    {
+      "pcm": -32,
+      "pcmu": 123
+    },
+    {
+      "pcm": -8,
+      "pcmu": 126
+    },
+    {
+      "pcm": -4,
+      "pcmu": 126
+    },
+    {
+      "pcm": -1,
+      "pcmu": 126
+    },
+    {
+      "pcm": 0,
+      "pcmu": 255
+    },
+    {
+      "pcm": 1,
+      "pcmu": 255
+    },
+    {
+      "pcm": 4,
+      "pcmu": 254
+    },
+    {
+      "pcm": 8,
+      "pcmu": 254
+    },
+    {
+      "pcm": 32,
+      "pcmu": 251
+    },
+    {
+      "pcm": 33,
+      "pcmu": 251
+    },
+    {
+      "pcm": 128,
+      "pcmu": 239
+    },
+    {
+      "pcm": 132,
+      "pcmu": 239
+    },
+    {
+      "pcm": 1000,
+      "pcmu": 206
+    },
+    {
+      "pcm": 10000,
+      "pcmu": 156
+    },
+    {
+      "pcm": 32124,
+      "pcmu": 128
+    },
+    {
+      "pcm": 32767,
+      "pcmu": 128
+    }
+  ],
+  "full_int16_range_sha256": "e0be5288dc67592c7281f521cafb4d38cdee27e7d1aced826a99b07b0a557b78"
+}

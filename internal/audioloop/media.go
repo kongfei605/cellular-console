@@ -2,17 +2,23 @@
 package audioloop
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/kongfei605/ec20-toolbox/internal/voicepcm"
 	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"
+	"github.com/pion/rtp"
 	"github.com/pion/sdp/v3"
 	"github.com/pion/webrtc/v4"
 )
@@ -20,11 +26,12 @@ import (
 var ErrBusy = errors.New("已有音频回环正在运行，请先停止或等待自动释放")
 
 type Media struct {
-	mu     sync.Mutex
-	api    *webrtc.API
-	mux    ice.UDPMux
-	active *Peer
-	closed bool
+	mu         sync.Mutex
+	api        *webrtc.API
+	mux        ice.UDPMux
+	active     *Peer
+	closed     bool
+	pcmFactory voicepcm.Factory
 }
 
 type Peer struct {
@@ -37,6 +44,12 @@ type Peer struct {
 	Reflected  atomic.Uint64
 	LastPacket atomic.Int64
 	once       sync.Once
+	ctx        context.Context
+	cancel     context.CancelFunc
+	startPCM   sync.Once
+	resourceMu sync.Mutex
+	pcm        voicepcm.Stream
+	jitter     voicepcm.Jitter
 }
 
 type MediaStats struct {
@@ -50,6 +63,20 @@ type MediaStats struct {
 }
 
 func NewMedia(bind string) (*Media, error) {
+	return newMedia(bind, nil)
+}
+
+// NewMediaWithPCM is a staged library entry point, deliberately absent from the
+// deployed CLI/UI. Production use must supply a guarded EC20-only PCM factory.
+// All ordinary callers continue to use NewMedia's hardware-free RTP echo.
+func NewMediaWithPCM(bind string, factory voicepcm.Factory) (*Media, error) {
+	if factory == nil {
+		return nil, errors.New("explicit guarded PCM factory required")
+	}
+	return newMedia(bind, factory)
+}
+
+func newMedia(bind string, factory voicepcm.Factory) (*Media, error) {
 	addr, err := net.ResolveUDPAddr("udp4", bind)
 	if err != nil || addr.IP == nil || addr.IP.IsUnspecified() {
 		return nil, errors.New("media bind must specify one IPv4 address")
@@ -77,7 +104,7 @@ func NewMedia(bind string) (*Media, error) {
 		mux.Close()
 		return nil, err
 	}
-	return &Media{api: webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithSettingEngine(se), webrtc.WithInterceptorRegistry(ir)), mux: mux}, nil
+	return &Media{api: webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithSettingEngine(se), webrtc.WithInterceptorRegistry(ir)), mux: mux, pcmFactory: factory}, nil
 }
 
 func validateOffer(offer webrtc.SessionDescription) error {
@@ -117,6 +144,7 @@ func (m *Media) Offer(ctx context.Context, owner string, expires time.Time, offe
 		return "", webrtc.SessionDescription{}, err
 	}
 	p := &Peer{ID: token(), Owner: owner, PC: pc, Created: time.Now(), Expires: expires}
+	p.ctx, p.cancel = context.WithCancel(context.Background())
 	if max := p.Created.Add(3 * time.Minute); p.Expires.After(max) {
 		p.Expires = max
 	}
@@ -145,6 +173,9 @@ func (m *Media) Offer(ctx context.Context, owner string, expires time.Time, offe
 		}
 	}()
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		if s == webrtc.PeerConnectionStateConnected && m.pcmFactory != nil {
+			p.startPCM.Do(func() { go m.runPCM(p, track) })
+		}
 		if s == webrtc.PeerConnectionStateFailed || s == webrtc.PeerConnectionStateClosed {
 			go m.stop(p)
 		}
@@ -162,6 +193,10 @@ func (m *Media) Offer(ctx context.Context, owner string, expires time.Time, offe
 			p.Received.Add(1)
 			p.LastPacket.Store(time.Now().UnixNano())
 			if len(packet.Payload) == 0 || len(packet.Payload) > 1600 {
+				continue
+			}
+			if m.pcmFactory != nil {
+				p.jitter.Push(packet.Timestamp, packet.Payload)
 				continue
 			}
 			// Do not reflect client-specific MID/audio-level extensions into the
@@ -197,6 +232,16 @@ func (m *Media) Offer(ctx context.Context, owner string, expires time.Time, offe
 
 func (m *Media) stop(p *Peer) {
 	p.once.Do(func() {
+		if p.cancel != nil {
+			p.cancel()
+		}
+		p.resourceMu.Lock()
+		pcm := p.pcm
+		p.pcm = nil
+		p.resourceMu.Unlock()
+		if pcm != nil {
+			pcm.Close()
+		}
 		p.PC.Close()
 		m.mu.Lock()
 		if m.active == p {
@@ -204,6 +249,100 @@ func (m *Media) stop(p *Peer) {
 		}
 		m.mu.Unlock()
 	})
+}
+
+func (m *Media) runPCM(p *Peer, track *webrtc.TrackLocalStaticRTP) {
+	stream, err := m.pcmFactory(p.ctx)
+	if err != nil || stream == nil {
+		m.stop(p)
+		return
+	}
+	p.resourceMu.Lock()
+	if p.ctx.Err() != nil {
+		p.resourceMu.Unlock()
+		stream.Close()
+		return
+	}
+	p.pcm = stream
+	p.resourceMu.Unlock()
+	// Capture is paced at 20ms even when the USB driver supplies 40ms bursts.
+	go func() {
+		defer m.stop(p)
+		frame := make([]byte, voicepcm.FrameBytes)
+		seed := make([]byte, 6)
+		if _, err := rand.Read(seed); err != nil {
+			return
+		}
+		seq, stamp := binary.BigEndian.Uint16(seed), binary.BigEndian.Uint32(seed[2:])
+		var next time.Time
+		for {
+			if _, err := io.ReadFull(stream, frame); err != nil {
+				return
+			}
+			if next.IsZero() {
+				next = time.Now()
+			}
+			if time.Since(next) > 200*time.Millisecond {
+				return
+			}
+			wait := time.NewTimer(time.Until(next))
+			select {
+			case <-p.ctx.Done():
+				wait.Stop()
+				return
+			case <-wait.C:
+			}
+			encoded, err := voicepcm.EncodePCM16LE(frame)
+			if err != nil {
+				return
+			}
+			packet := &rtp.Packet{Header: rtp.Header{Version: 2, SequenceNumber: seq, Timestamp: stamp}, Payload: encoded}
+			if err = track.WriteRTP(packet); err != nil {
+				return
+			}
+			p.Reflected.Add(1)
+			seq++
+			stamp += voicepcm.FrameSamples
+			next = next.Add(20 * time.Millisecond)
+		}
+	}()
+	defer m.stop(p)
+	// Start with 40ms prebuffering; late packets are dropped rather than
+	// accumulating latency. Missing samples become silence, never old speech.
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	var ready time.Time
+	last := time.Now()
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case now := <-ticker.C:
+			if now.Sub(last) > 200*time.Millisecond {
+				return
+			}
+			last = now
+			if ready.IsZero() {
+				queued, _, _ := p.jitter.Stats()
+				if queued == 0 {
+					continue
+				}
+				ready = now.Add(40 * time.Millisecond)
+				continue
+			}
+			if now.Before(ready) {
+				continue
+			}
+			frame, started := p.jitter.Pop()
+			if !started {
+				continue
+			}
+			pcm := voicepcm.DecodePCM16LE(frame)
+			if _, err := io.Copy(stream, bytes.NewReader(pcm)); err != nil {
+				return
+			}
+		}
+	}
 }
 
 func (m *Media) Stop(owner, id string) bool {
