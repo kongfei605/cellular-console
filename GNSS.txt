@@ -1,0 +1,48 @@
+EC20 Toolbox — GNSS (v1.5.0)
+
+入口：https://192.0.2.10:8788/#location，使用主控制台的 HTTPS、登录及 CSRF。
+只有定位页轮询 /api/location；定位坐标和原始 NMEA 不写入短信/工作区归档，
+也不进入 /api/status、通用诊断或诊断导出。页面不调用外部地图、浏览器定位或辅助定位下载。
+
+2026-11-07 的本机验证范围
+  EC20F / EC20CEFAGR08A03M4G / ModemManager 1.20.4。
+  专用 GNSS 数据口 ttyUSB1；PPP 仍占用 ttyUSB2，由现有 pppd 管理。
+  ModemManager Location Setup 将现有源 1 扩展为 7（保留 3GPP，增加 GPS raw/NMEA）。
+  SignalsLocation 保持 false。未停止任何网络服务、未重启模块、未修改 USB 配置。
+  70 次连续健康采样确认 PPP、USB 编号、保护服务 PID、路由及配置未变。
+  已观察到 NMEA，尚未获得有效经纬度。需现场检查 GNSS 天线及天空视野后验收首次定位。
+
+启用 / 停止
+  默认程序不开放控制，经过本机验证后才使用 -gnss-control。
+  本仓库的部署单元只适用于上述已验证的 69；其他固件或 MM 版本先做维护评估。
+  启用需要有线主用、蜂窝备用健康、状态新鲜、无进行中呼叫、无短信/定位设置并发。
+  启用中若保护状态变化，尝试恢复新启用的 GPS 源；设置超时不自动重试。
+  停止定位只清除 GPS raw/NMEA 位，保留 3GPP、外部非托管源及广播设置。
+  定位不会在程序启动或 USB 重新插入时被程序自动开启。
+  关闭浏览器不会停止已开启的 GNSS；停止按钮在蜂窝接管时仍可使用。
+  GNSS 的位置广播或非托管 GPS 由外部启用时，不接管其配置。
+
+数据解释
+  可见/使用卫星数及 HDOP 来自 GSV/GGA 缓存，不作为有效定位的依据。
+  WGS84 坐标必须通过 NMEA 校验和、RMC 有效状态、日期及 UTC 新鲜度验证。
+  只接受 90 秒内（未来不超过 5 秒）的定位；同一时刻 GGA 报告未定位时不显示坐标。
+  未启用、数据读取失败或过期时不展示上次坐标为当前位置。零经纬度允许作为合法值。
+  原始 NMEA 可能含位置，请勿公开截图原始语句；本地演示使用公开 NMEA 示例坐标。
+
+实现及权限
+  Location 是 ModemManager 的粗粒度 polkit 权限，授予专用 ec20-console 用户。
+  应用只使用 Location 的元数据、GetLocation 及上述受限 Setup。
+  不授予 Device.Control，不开放任意 AT、SUPL/XTRA 下载、定位注入、刷新率更改或 USB/网络设置。
+  所有调用绑定现有 ModemManager 的唯一总线名称，不自动启动新进程，不打开串口。
+  GNSS 设置与短信发送、拨号/接听互斥；挂断仍可执行。
+
+参考（本机实测优先）
+  https://www.freedesktop.org/software/ModemManager/api/latest/gdbus-org.freedesktop.ModemManager1.Modem.Location.html
+  https://raw.githubusercontent.com/linux-mobile-broadband/ModemManager/1.20.4/plugins/quectel/mm-shared-quectel.c
+  https://raw.githubusercontent.com/linux-mobile-broadband/ModemManager/1.20.4/src/mm-base-modem.c
+
+测试
+  make test（Go race + 现有 UAC 预备检查测试）；go vet ./...
+  location_test.go 覆盖校验和、时间、坐标、缓存不冒充定位、源位保留、权限及网络保护。
+  deploy/gnss-probe.py 为 69 的一次性有界探测脚本，运行前必须确认本机配置/目录未重复。
+  探测含独立 120 秒恢复任务，恢复原启用源；原始采样只保存在 69 的 root 私有目录。

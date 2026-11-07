@@ -26,7 +26,7 @@ import (
 //go:embed web/*
 var assets embed.FS
 
-const version = "1.4.0"
+const version = "1.5.0"
 
 type credentials struct {
 	Username string `json:"username"`
@@ -42,27 +42,29 @@ type loginLimit struct {
 }
 
 type App struct {
-	audio        *AudioProxy
-	secure       bool
-	publicOrigin string
-	workspace    *Workspace
-	backend      Backend
-	inbox        *Inbox
-	password     [32]byte
-	username     string
-	failoverPath string
-	demo         bool
-	mu           sync.RWMutex
-	pollMu       sync.Mutex
-	actionMu     sync.Mutex
-	snapshot     Snapshot
-	sessions     map[string]session
-	limits       map[string]loginLimit
-	network      *NetworkMonitor
-	outbox       *Outbox
-	smsMu        sync.Mutex
-	smsActive    bool
-	smsCursor    int
+	locationControl bool
+	locationBusy    bool
+	audio           *AudioProxy
+	secure          bool
+	publicOrigin    string
+	workspace       *Workspace
+	backend         Backend
+	inbox           *Inbox
+	password        [32]byte
+	username        string
+	failoverPath    string
+	demo            bool
+	mu              sync.RWMutex
+	pollMu          sync.Mutex
+	actionMu        sync.Mutex
+	snapshot        Snapshot
+	sessions        map[string]session
+	limits          map[string]loginLimit
+	network         *NetworkMonitor
+	outbox          *Outbox
+	smsMu           sync.Mutex
+	smsActive       bool
+	smsCursor       int
 }
 
 func newApp(backend Backend, inbox *Inbox, creds credentials, failoverPath string, demo bool) *App {
@@ -415,10 +417,10 @@ func (a *App) voiceAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if action != "hangup" {
 		a.smsMu.Lock()
-		smsBusy := a.smsActive
+		smsBusy := a.smsActive || a.locationBusy
 		a.smsMu.Unlock()
 		if smsBusy {
-			apiError(w, 409, "短信请求正在处理，请稍候再拨号或接听")
+			apiError(w, 409, "短信或定位设置正在处理，请稍候再拨号或接听")
 			return
 		}
 		f, err := a.failover()
@@ -463,6 +465,7 @@ func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
 	a.workspaceRoutes(mux)
 	a.audioRoutes(mux)
+	a.locationRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "version": version})
 	})

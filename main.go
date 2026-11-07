@@ -31,6 +31,7 @@ func main() {
 	publicOrigin := flag.String("public-origin", "", "canonical HTTPS origin")
 	audioBackend := flag.String("audio-backend", "", "fixed loopback audio control URL")
 	gatewayKey := flag.String("audio-gateway-key", "", "private audio gateway credential file")
+	gnssControl := flag.Bool("gnss-control", false, "allow guarded GNSS setup for the locally verified firmware profile")
 	flag.Parse()
 	if *demo && !strings.HasPrefix(*listen, "127.0.0.1:") {
 		log.Fatal("demo mode must listen on 127.0.0.1")
@@ -54,6 +55,7 @@ func main() {
 	defer backend.Close()
 	app := newApp(backend, inbox, creds, *failover, *demo)
 	app.network.configPath = *failoverConfig
+	app.locationControl = *gnssControl
 	var tlsPair tls.Certificate
 	if *tlsListen != "" {
 		if *publicOrigin != "https://"+*tlsListen {

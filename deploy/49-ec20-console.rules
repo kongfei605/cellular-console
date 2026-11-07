@@ -1,10 +1,13 @@
-// Voice and Messaging are ModemManager's coarse authorizations. The application
+// Voice, Messaging and Location are ModemManager's coarse authorizations. The application
 // only exposes SMS Create/Send/state and voice control, never SMS deletion or
-// storage changes. No Device.Control/network/firmware privileges are granted.
+// storage changes. Location is limited to authenticated reads and guarded GPS raw/NMEA
+// setup, preserving other sources and SignalsLocation. No Device.Control/network/
+// firmware privileges are granted.
 polkit.addRule(function(action, subject) {
     if (subject.user === "ec20-console" &&
         (action.id === "org.freedesktop.ModemManager1.Voice" ||
-         action.id === "org.freedesktop.ModemManager1.Messaging")) {
+         action.id === "org.freedesktop.ModemManager1.Messaging" ||
+         action.id === "org.freedesktop.ModemManager1.Location")) {
         return polkit.Result.YES;
     }
 });

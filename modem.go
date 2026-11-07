@@ -313,6 +313,7 @@ func (b *ModemBackend) Close() {
 }
 
 type DemoBackend struct {
+	gnssOn    bool
 	sessionID string
 	mu        sync.Mutex
 	calls     []Call

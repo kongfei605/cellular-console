@@ -113,7 +113,7 @@ func (a *App) diagnostics() map[string]any {
 	} else {
 		problem = a.workspace.Error()
 	}
-	loc := "未启用；尚未验证定位硬件/天线与定位数据"
+	loc := "独立定位页读取NMEA；启用需有线主用且蜂窝备用健康，不自动启用或重试；诊断包不含定位数据"
 	if !r.Location {
 		loc = "当前 ModemManager 未提供 Location 接口"
 	}
@@ -122,7 +122,7 @@ func (a *App) diagnostics() map[string]any {
 		{"name": "网络 / VPN / 流量", "status": "只读状态", "detail": "读取主备控制器状态与接口计数，不执行额外探测"},
 		{"name": "浏览器音频回环", "status": "独立服务已验证", "detail": "统一HTTPS入口内的音频页；内部进程隔离，尚未连接EC20通话音频"},
 		{"name": "真实通话音频 / UAC", "status": "待现场支持", "detail": "预备代码未启用；需现场确认声卡、音频能力和重启维护窗口"},
-		{"name": "定位 / GNSS", "status": "未启用", "detail": loc},
+		{"name": "定位 / GNSS", "status": "已接入独立页面", "detail": loc},
 		{"name": "eSTK 配置管理", "status": "能力未验证", "detail": "尚未确认SIM及配套接口；没有配置文件写入入口"},
 		{"name": "VoWiFi / IMS", "status": "未接入", "detail": "需独立核实运营商、认证与ePDG/IMS能力"},
 		{"name": "服务代码 / USSD", "status": "未启用", "detail": "不将 *…# 当作普通电话；未增加USSD控制权限"},

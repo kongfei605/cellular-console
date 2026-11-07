@@ -163,8 +163,8 @@ func (a *App) sendSMS(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"message": prior, "duplicate": true})
 		return
 	}
-	if a.smsActive {
-		apiError(w, 409, "上一条短信仍在处理，请稍候")
+	if a.smsActive || a.locationBusy {
+		apiError(w, 409, "短信或定位设置仍在处理，请稍候")
 		return
 	}
 	if reason := a.smsAllowed(); reason != "" {
