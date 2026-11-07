@@ -53,7 +53,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   try{
    const result=await api('/api/sms','POST',{request_id:submitted.id,number:submitted.number,text:submitted.text});
    if(!state.logged||epoch!==state.authEpoch)return;
-   state.selected=result.message.conversation_id;state.search='';state.unread=false;
+   state.selected=result.message.conversation_id;state.search='';state.unread=false;workspaceUI.trash=false;
+   if(state.view!=='inbox')location.hash='inbox';
    toast(result.duplicate?'已找到同一请求的发送记录，未重复提交':'发送请求已保存，请在会话中查看状态');
    await loadConversations(false);render();
   }catch(e){if(state.logged&&epoch===state.authEpoch)toast(`${e.message}。连接异常时请先查看会话，勿直接重复发送。`,true);}

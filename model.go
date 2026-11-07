@@ -48,6 +48,8 @@ func readFailover(path string) (Failover, error) {
 }
 
 type Radio struct {
+	SessionID     string `json:"-"`
+	Location      bool   `json:"location"`
 	Present       bool   `json:"present"`
 	ID            string `json:"id,omitempty"`
 	Model         string `json:"model"`
@@ -97,6 +99,7 @@ type Snapshot struct {
 	Failover         Failover      `json:"failover"`
 	Calls            []Call        `json:"calls"`
 	Events           []Event       `json:"events"`
+	ReceivedCount    int           `json:"received_count"`
 	MessageCount     int           `json:"message_count"`
 	UnreadCount      int           `json:"unread_count"`
 	CallAllowed      bool          `json:"call_allowed"`

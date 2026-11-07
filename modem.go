@@ -90,6 +90,7 @@ func parseObjects(all objects, expected string) (dbus.ObjectPath, Radio, []Messa
 	}
 	ifaces := all[path]
 	p := ifaces[modemIF]
+	r.Location = ifaces[modemIF+".Location"] != nil
 	r.Present = true
 	r.ID = stringProp(p, "DeviceIdentifier")
 	r.Model = stringProp(p, "Model")
@@ -217,12 +218,30 @@ func (b *ModemBackend) get(ctx context.Context) (objects, error) {
 func (b *ModemBackend) Snapshot(ctx context.Context) (Radio, []Message, []Call, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if err := b.connect(); err != nil {
+		return Radio{}, nil, nil, err
+	}
+	var owner string
+	if err := b.conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetNameOwner", dbus.FlagNoAutoStart, destination).Store(&owner); err != nil {
+		return Radio{}, nil, nil, err
+	}
 	all, err := b.get(ctx)
 	if err != nil {
 		return Radio{}, nil, nil, err
 	}
 	_, r, m, c, err := parseObjects(all, b.expected)
-	return r, m, c, err
+	if err != nil {
+		return r, m, c, err
+	}
+	var after string
+	if err = b.conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetNameOwner", dbus.FlagNoAutoStart, destination).Store(&after); err != nil {
+		return Radio{}, nil, nil, err
+	}
+	if owner != after {
+		return Radio{}, nil, nil, errors.New("modem service changed during snapshot")
+	}
+	r.SessionID = owner
+	return r, m, c, nil
 }
 func (b *ModemBackend) Dial(ctx context.Context, phone string) (string, error) {
 	b.mu.Lock()
@@ -294,15 +313,19 @@ func (b *ModemBackend) Close() {
 }
 
 type DemoBackend struct {
-	mu     sync.Mutex
-	calls  []Call
-	serial int
+	sessionID string
+	mu        sync.Mutex
+	calls     []Call
+	serial    int
 }
 
 func (b *DemoBackend) Snapshot(ctx context.Context) (Radio, []Message, []Call, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	r := Radio{Present: true, ID: "demo-ec20", Model: "EC20F", Manufacturer: "Quectel", Firmware: "EC20CEFAGR08A03M4G", Operator: "CHN-UNICOM", Technology: "LTE / 4G", Signal: 80, State: "数据已连接", SIMReady: true, Messaging: true, Voice: true, PrimaryPort: "ttyUSB2"}
+	if b.sessionID == "" {
+		b.sessionID = randomToken()
+	}
+	r := Radio{SessionID: b.sessionID, Present: true, ID: "demo-ec20", Model: "EC20F", Manufacturer: "Quectel", Firmware: "EC20CEFAGR08A03M4G", Operator: "CHN-UNICOM", Technology: "LTE / 4G", Signal: 80, State: "数据已连接", SIMReady: true, Messaging: true, Voice: true, PrimaryPort: "ttyUSB2"}
 	m := []Message{{Sender: "10010", Text: "【演示短信】您的蜂窝网络已连接。本页面使用模拟设备，不会实际拨号或发送短信。", Timestamp: "2026-11-06T20:40:00+08:00"}, {Sender: "测试联系人", Text: "【演示短信】周末调试时，备用网络保持在线。", Timestamp: "2026-11-06T19:12:00+08:00"}}
 	m = append(m, Message{Sender: "10010", Text: "【演示短信】前一日网络服务提示。短信会按发送号码聚合，并按日期显示。", Timestamp: "2026-11-05T09:30:00+08:00"}, Message{Sender: "+8613800000000", Text: "【演示短信】这是带 +86 的号码。", Timestamp: "2026-11-05T12:00:00+08:00"}, Message{Sender: "13800000000", Text: "【演示短信】同一手机号码的本地写法会显示在同一个会话。", Timestamp: "2026-11-06T18:20:00+08:00"})
 	return r, m, append([]Call{}, b.calls...), nil

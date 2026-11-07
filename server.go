@@ -26,7 +26,7 @@ import (
 //go:embed web/*
 var assets embed.FS
 
-const version = "1.2.0"
+const version = "1.3.0"
 
 type credentials struct {
 	Username string `json:"username"`
@@ -42,6 +42,7 @@ type loginLimit struct {
 }
 
 type App struct {
+	workspace    *Workspace
 	backend      Backend
 	inbox        *Inbox
 	password     [32]byte
@@ -65,6 +66,11 @@ func newApp(backend Backend, inbox *Inbox, creds credentials, failoverPath strin
 	a := &App{backend: backend, inbox: inbox, password: sha256.Sum256([]byte(creds.Password)), username: creds.Username,
 		failoverPath: failoverPath, demo: demo, sessions: map[string]session{}, limits: map[string]loginLimit{},
 		snapshot: Snapshot{Calls: []Call{}, Events: []Event{}, Version: version, Demo: demo, Network: NetworkStatus{Config: defaultNetworkConfig(), Interfaces: []InterfaceStats{}, Samples: []TrafficSample{}, Events: []NetworkEvent{}}}}
+	var workspaceErr error
+	a.workspace, workspaceErr = openWorkspace(filepath.Dir(inbox.path))
+	if workspaceErr != nil {
+		log.Printf("workspace unavailable: %v", workspaceErr)
+	}
 	a.network = newNetworkMonitor(filepath.Dir(inbox.path), "/etc/ec20-failover.json")
 	var outboxErr error
 	a.outbox, outboxErr = openOutbox(filepath.Dir(inbox.path))
@@ -129,6 +135,11 @@ func (a *App) poll(ctx context.Context) {
 		problem = "暂时无法读取调制解调器"
 		log.Printf("modem snapshot: %v", err)
 	}
+	if err == nil && a.workspace != nil {
+		if e := a.workspace.Observe(r, c, time.Now().UTC()); e != nil {
+			log.Printf("call history persistence failed")
+		}
+	}
 	added := 0
 	if err == nil && r.Present {
 		var se error
@@ -142,6 +153,7 @@ func (a *App) poll(ctx context.Context) {
 		problem = "自动备用网络状态不可用，通话控制已锁定"
 	}
 	messageCount, unread := a.inbox.Counts()
+	receivedCount := messageCount
 	if a.outbox != nil {
 		messageCount += len(a.outbox.List())
 	}
@@ -205,7 +217,7 @@ func (a *App) poll(ctx context.Context) {
 		reason = "调制解调器状态暂时不可用"
 	}
 	a.snapshot = Snapshot{Radio: r, Failover: f, Calls: c, Events: events, MessageCount: messageCount, UnreadCount: unread,
-		CallAllowed: reason == "", CallBlockReason: reason, Error: problem, Updated: time.Now().UTC(), Version: version, Demo: a.demo,
+		ReceivedCount: receivedCount, CallAllowed: reason == "", CallBlockReason: reason, Error: problem, Updated: time.Now().UTC(), Version: version, Demo: a.demo,
 		LastModemSuccess: lastSuccess, Network: netStatus}
 	a.snapshot.SMSSendAllowed = smsReason == ""
 	a.snapshot.SMSBlockReason = smsReason
@@ -213,11 +225,13 @@ func (a *App) poll(ctx context.Context) {
 
 func (a *App) refreshInboxCounts() {
 	count, unread := a.inbox.Counts()
+	receivedCount := count
 	if a.outbox != nil {
 		count += len(a.outbox.List())
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.snapshot.ReceivedCount = receivedCount
 	a.snapshot.MessageCount = count
 	a.snapshot.UnreadCount = unread
 }
@@ -440,6 +454,7 @@ func (a *App) voiceAction(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
+	a.workspaceRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "version": version})
 	})
@@ -472,7 +487,17 @@ func (a *App) handler() http.Handler {
 			apiError(w, 400, "搜索内容过长")
 			return
 		}
-		writeJSON(w, 200, conversationsFor(a.allMessages(), query, r.URL.Query().Get("unread") == "1"))
+		items := a.allMessages()
+		threads := conversationsFor(items, query, r.URL.Query().Get("unread") == "1")
+		result := []Conversation{}
+		trash := r.URL.Query().Get("trash") == "1"
+		for _, c := range threads {
+			archived := a.workspace != nil && a.workspace.IsArchived(c.ID, items)
+			if archived == trash {
+				result = append(result, c)
+			}
+		}
+		writeJSON(w, 200, result)
 	}))
 	mux.HandleFunc("GET /api/conversations/{id}", a.protected(func(w http.ResponseWriter, r *http.Request) {
 		d, err := conversationFor(a.allMessages(), r.PathValue("id"))
