@@ -8,7 +8,11 @@ import (
 )
 
 func forwardRulePublic(r ForwardRule) map[string]any {
-	return map[string]any{"id": r.ID, "name": r.Name, "enabled": r.Enabled, "match": r.Match, "senders": r.Senders, "keywords": r.Keywords, "webhook": r.Webhook, "url_display": maskedWebhook(r.URL), "url_configured": r.URL != "", "bearer_configured": r.Bearer != "", "sms": r.SMS, "number": r.Number, "version": r.Version, "since": r.Since}
+	names := []string{}
+	for _, h := range r.Headers {
+		names = append(names, h.Name)
+	}
+	return map[string]any{"id": r.ID, "name": r.Name, "enabled": r.Enabled, "match": r.Match, "senders": r.Senders, "keywords": r.Keywords, "webhook": r.Webhook, "url_display": maskedWebhook(r.URL), "url_configured": r.URL != "", "header_names": names, "sms": r.SMS, "number": r.Number, "version": r.Version, "since": r.Since}
 }
 func (a *App) forwardingStatus() map[string]any {
 	if a.forwarding == nil {
@@ -35,6 +39,20 @@ func (a *App) forwardingStatus() map[string]any {
 	return map[string]any{"available": true, "enabled": s.data.Enabled, "sms_per_hour": s.data.SMSPerHour, "rules": rules, "jobs": jobs, "error": problem, "demo": a.demo, "sms_block_reason": a.smsAllowed()}
 }
 func (a *App) forwardingRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/forwarding/rules/{id}", a.protected(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if a.forwarding != nil {
+			a.forwarding.mu.Lock()
+			defer a.forwarding.mu.Unlock()
+			for _, rule := range a.forwarding.data.Rules {
+				if rule.ID == r.PathValue("id") {
+					writeJSON(w, 200, map[string]any{"id": rule.ID, "version": rule.Version, "headers": rule.Headers})
+					return
+				}
+			}
+		}
+		apiError(w, 404, "规则不存在")
+	}))
 	mux.HandleFunc("GET /api/forwarding", a.protected(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.forwardingStatus()) }))
 	mux.HandleFunc("POST /api/forwarding/config", a.protected(func(w http.ResponseWriter, r *http.Request) {
 		var v struct {

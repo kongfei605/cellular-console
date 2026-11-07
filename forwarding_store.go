@@ -16,21 +16,27 @@ import (
 
 const forwardMarker = "[EC20-FWD]"
 
+type ForwardHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
 type ForwardRule struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Enabled     bool      `json:"enabled"`
-	Match       string    `json:"match"`
-	Senders     []string  `json:"senders"`
-	Keywords    []string  `json:"keywords"`
-	Webhook     bool      `json:"webhook"`
-	URL         string    `json:"url,omitempty"`
-	Bearer      string    `json:"bearer,omitempty"`
-	ClearBearer bool      `json:"clear_bearer,omitempty"`
-	SMS         bool      `json:"sms"`
-	Number      string    `json:"number,omitempty"`
-	Version     int       `json:"version"`
-	Since       time.Time `json:"since"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Enabled     bool            `json:"enabled"`
+	Match       string          `json:"match"`
+	Senders     []string        `json:"senders"`
+	Keywords    []string        `json:"keywords"`
+	Webhook     bool            `json:"webhook"`
+	URL         string          `json:"url,omitempty"`
+	Headers     []ForwardHeader `json:"headers"`
+	Bearer      string          `json:"bearer,omitempty"`
+	ClearBearer bool            `json:"clear_bearer,omitempty"`
+	SMS         bool            `json:"sms"`
+	Number      string          `json:"number,omitempty"`
+	Version     int             `json:"version"`
+	Since       time.Time       `json:"since"`
 }
 type ForwardJob struct {
 	AttemptedAt time.Time `json:"attempted_at"`
@@ -85,10 +91,12 @@ func openForwarding(dir string) (*ForwardStore, error) {
 	if s.data.SMSPerHour < 1 || s.data.SMSPerHour > 60 || len(s.data.Rules) > 20 || len(s.data.Jobs) > 1000 || len(s.data.Seen) > 20000 {
 		return nil, errors.New("invalid forwarding store bounds")
 	}
-	for _, r := range s.data.Rules {
-		if _, e = validateForwardRule(r); e != nil {
+	for i, r := range s.data.Rules {
+		checked, err := validateForwardRule(r)
+		if err != nil {
 			return nil, errors.New("invalid persisted forwarding rule")
 		}
+		s.data.Rules[i] = checked
 	}
 	// Webhook retries use the same event ID; SMS recovery only reconciles the durable outbox.
 	for i := range s.data.Jobs {
@@ -167,6 +175,17 @@ func validateForwardRule(r ForwardRule) (ForwardRule, error) {
 	if len(r.Bearer) > 2048 || !validLabel(r.Bearer, 2048) {
 		return r, errors.New("Bearer token 格式无效")
 	}
+	headers := append([]ForwardHeader{}, r.Headers...)
+	if r.Bearer != "" {
+		headers = append(headers, ForwardHeader{Name: "Authorization", Value: "Bearer " + r.Bearer})
+	}
+	var headerErr error
+	r.Headers, headerErr = validateForwardHeaders(headers)
+	if headerErr != nil {
+		return r, headerErr
+	}
+	r.Bearer = ""
+	r.ClearBearer = false
 	if r.Webhook {
 		if e := validateWebhookURL(r.URL); e != nil {
 			return r, e
@@ -267,8 +286,17 @@ func (s *ForwardStore) put(r ForwardRule) (ForwardRule, error) {
 			if r.URL == "" {
 				r.URL = p.URL
 			}
-			if r.Bearer == "" && !r.ClearBearer {
-				r.Bearer = p.Bearer
+			if r.Headers == nil {
+				r.Headers = append([]ForwardHeader{}, p.Headers...)
+				if r.Bearer != "" || r.ClearBearer {
+					kept := []ForwardHeader{}
+					for _, h := range r.Headers {
+						if !strings.EqualFold(h.Name, "Authorization") {
+							kept = append(kept, h)
+						}
+					}
+					r.Headers = kept
+				}
 			}
 			r.Version = p.Version + 1
 		}

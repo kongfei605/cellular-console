@@ -26,7 +26,7 @@ import (
 //go:embed web/*
 var assets embed.FS
 
-const version = "1.6.0"
+const version = "1.6.1"
 
 type credentials struct {
 	Username string `json:"username"`

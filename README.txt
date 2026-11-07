@@ -180,3 +180,5 @@ v1.5.1 定位诊断：区分未定位、GSV/载噪比报告缺失与实际数量
 v1.6.0 短信转发：按发件标识、内容关键词匹配（任一/全部），支持 Webhook POST 和短信目标。
 默认关闭，提供只读规则预览、持久化队列/去重、有限重试、额度及现有短信网络保护。
 使用和限制见 SMS_FORWARDING.txt；周一 GNSS/UAC 现场联调见 MONDAY_ONSITE_CHECKLIST.txt。
+
+v1.6.1：Webhook 支持多组自定义 Header，兼容旧 Bearer；转发方式通过＋按需添加，支持移除、组合。

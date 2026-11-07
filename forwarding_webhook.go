@@ -16,6 +16,49 @@ import (
 	"time"
 )
 
+func validateForwardHeaders(headers []ForwardHeader) ([]ForwardHeader, error) {
+	if len(headers) > 20 {
+		return nil, errors.New("最多配置20个自定义 Header")
+	}
+	seen := map[string]bool{}
+	out := make([]ForwardHeader, 0, len(headers))
+	total := 0
+	for _, h := range headers {
+		h.Name = strings.TrimSpace(h.Name)
+		if len(h.Name) == 0 || len(h.Name) > 128 || len(h.Value) > 4096 {
+			return nil, errors.New("Header 名称为1–128字节，值最多4096字节")
+		}
+		for _, c := range h.Name {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || strings.ContainsRune("!#$%&'*+-.^_`|~", c)) {
+				return nil, errors.New("Header 名称含无效字符")
+			}
+		}
+		for _, c := range h.Value {
+			if (c < 32 && c != '\t') || c == 127 {
+				return nil, errors.New("Header 值不能包含换行或控制字符")
+			}
+		}
+		name := http.CanonicalHeaderKey(h.Name)
+		switch name {
+		case "Host", "Content-Length", "Transfer-Encoding", "Connection", "Proxy-Connection", "Keep-Alive", "Te", "Trailer", "Upgrade", "Content-Type", "Idempotency-Key", "X-Ec20-Event-Id":
+			return nil, errors.New("连接控制、JSON 类型和去重 Header 由系统生成，不可覆盖")
+		}
+		if strings.HasPrefix(strings.ToLower(name), "proxy-") {
+			return nil, errors.New("不支持代理控制 Header")
+		}
+		if seen[name] {
+			return nil, errors.New("Header 名称重复（不区分大小写）")
+		}
+		seen[name] = true
+		total += len(name) + len(h.Value)
+		if total > 16384 {
+			return nil, errors.New("自定义 Header 总大小最多16KB")
+		}
+		out = append(out, ForwardHeader{Name: name, Value: h.Value})
+	}
+	return out, nil
+}
+
 func validateWebhookURL(raw string) error {
 	u, e := url.Parse(raw)
 	if e != nil || len(raw) > 2048 || u.Hostname() == "" || u.User != nil || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https") {
@@ -142,8 +185,12 @@ func (a *App) postForwardWebhook(ctx context.Context, j ForwardJob, r ForwardRul
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", j.ID)
 	req.Header.Set("X-EC20-Event-ID", j.ID)
-	if r.Bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+r.Bearer)
+	checked, e := validateForwardRule(r)
+	if e != nil {
+		return 0, errors.New("Webhook Header 配置无效")
+	}
+	for _, h := range checked.Headers {
+		req.Header.Set(h.Name, h.Value)
 	}
 	response, e := a.webhookClient.Do(req)
 	if e != nil {
