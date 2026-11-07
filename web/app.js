@@ -6,9 +6,9 @@ const $=(q)=>document.querySelector(q);
 const esc=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const state={logged:false,csrf:'',status:null,conversations:[],detail:null,view:'overview',selected:null,search:'',unread:false,phone:'',busy:false,authEpoch:0,viewKey:''};
 let polling=false,toastTimer,navView="";
-const titles={overview:'总览',network:'网络诊断',inbox:'短信会话',calls:'通话控制',audio:'音频实验室',location:'卫星定位',history:'通话记录',contacts:'联系人',diagnostics:'诊断与能力',settings:'设置'};
+const titles={overview:'总览',network:'网络诊断',inbox:'短信会话',forwarding:'短信转发',calls:'通话控制',audio:'音频实验室',location:'卫星定位',history:'通话记录',contacts:'联系人',diagnostics:'诊断与能力',settings:'设置'};
 function toast(text,error=false){const e=$('#toast');e.textContent=text;e.classList.toggle('error',error);e.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.hidden=true,4500);}
-function showLogin(){navView='';state.logged=false;state.authEpoch++;state.csrf='';state.conversations=[];state.detail=null;state.status=null;state.viewKey='';$('#global-calls').hidden=true;state.selected=null;state.phone='';resetSMSComposer();resetWorkspace();resetLocation();window.EC20Audio?.reset();$('#audio-pane').hidden=true;$('#main').hidden=false;$('#main').textContent='';$('#app').hidden=true;$('#login').hidden=false;$('#password').value='';if($('#dial-dialog').open)$('#dial-dialog').close();}
+function showLogin(){navView='';state.logged=false;state.authEpoch++;state.csrf='';state.conversations=[];state.detail=null;state.status=null;state.viewKey='';$('#global-calls').hidden=true;state.selected=null;state.phone='';resetSMSComposer();resetWorkspace();resetLocation();resetForwarding();window.EC20Audio?.reset();$('#audio-pane').hidden=true;$('#main').hidden=false;$('#main').textContent='';$('#app').hidden=true;$('#login').hidden=false;$('#password').value='';if($('#dial-dialog').open)$('#dial-dialog').close();}
 function showApp(){state.logged=true;state.authEpoch++;$('#login').hidden=true;$('#app').hidden=false;$('#login-error').textContent='';}
 async function api(path,method='GET',body){
  const opts={method,credentials:'same-origin',headers:{}};
@@ -68,17 +68,17 @@ function render(force=false){
  $('#demo-badge').hidden=!state.status.demo;$('#app-version').textContent='v'+state.status.version;
  $('#footer-update').textContent=`最近同步 ${dateText(state.status.updated)} · 每 ${preferences.refresh} 秒页面更新`;
  $('#main').hidden=state.view==='audio';$('#audio-pane').hidden=state.view!=='audio';if(state.view==='audio'){window.EC20Audio.enter();return;}
- const key=state.view==='location'?JSON.stringify([state.view,locationUI,state.status.network.fresh]):state.view==='settings'?JSON.stringify([state.view,preferences]):state.view==='inbox'?JSON.stringify([state.view,state.status.error,state.status.radio.present,state.status.sms_send_allowed,state.status.sms_block_reason,state.conversations,state.detail,state.search,state.unread,workspaceUI.contacts,workspaceUI.trash]):'';
+ const key=state.view==='forwarding'?JSON.stringify([state.view,forwardUI]):state.view==='location'?JSON.stringify([state.view,locationUI,state.status.network.fresh]):state.view==='settings'?JSON.stringify([state.view,preferences]):state.view==='inbox'?JSON.stringify([state.view,state.status.error,state.status.radio.present,state.status.sms_send_allowed,state.status.sms_block_reason,state.conversations,state.detail,state.search,state.unread,workspaceUI.contacts,workspaceUI.trash]):'';
  if(!force&&key&&key===state.viewKey)return;state.viewKey=key;
  const focus=document.activeElement,id=focus?.id,start=focus?.selectionStart,end=focus?.selectionEnd;
  const scroller=$('.conversation-messages'),scrollInfo=scroller?{id:scroller.dataset.threadId,top:scroller.scrollTop,bottom:scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<30}:null;
- $('#main').innerHTML=(state.status.error?`<div class="error-banner">${esc(state.status.error)}</div>`:'')+({overview,network:networkView,location:locationView,inbox,calls,history:historyView,contacts:contactsView,settings:settingsView,diagnostics:diagnosticsView}[state.view])();
+ $('#main').innerHTML=(state.status.error?`<div class="error-banner">${esc(state.status.error)}</div>`:'')+({overview,network:networkView,location:locationView,forwarding:forwardingView,inbox,calls,history:historyView,contacts:contactsView,settings:settingsView,diagnostics:diagnosticsView}[state.view])();
  const next=$('.conversation-messages');if(next){if(scrollInfo&&scrollInfo.id===state.selected&&!scrollInfo.bottom)next.scrollTop=scrollInfo.top;else next.scrollTop=next.scrollHeight;}
  if(id){const input=document.getElementById(id);if(input&&(id==='phone'||id==='search'||id==='workspace-search')){input.focus({preventScroll:true});try{input.setSelectionRange(start,end);}catch{}}}
 }
 async function sync(){
  if(!state.logged||polling)return;polling=true;const epoch=state.authEpoch;
- try{const s=await api('/api/status');if(!state.logged||epoch!==state.authEpoch)return;if(!state.status||new Date(s.updated)>=new Date(state.status.updated))state.status=s;observeNotifications(s);await loadWorkspace();if(state.view==='location')await loadLocation();if(!state.logged||epoch!==state.authEpoch)return;if(state.view==='inbox')await loadConversations(false);$('#sync-label').textContent='实时同步';render();}
+ try{const s=await api('/api/status');if(!state.logged||epoch!==state.authEpoch)return;if(!state.status||new Date(s.updated)>=new Date(state.status.updated))state.status=s;observeNotifications(s);await loadWorkspace();if(state.view==='location')await loadLocation();if(state.view==='forwarding')await loadForwarding();if(!state.logged||epoch!==state.authEpoch)return;if(state.view==='inbox')await loadConversations(false);$('#sync-label').textContent='实时同步';render();}
  catch(e){if(state.logged){$('#sync-label').textContent='连接暂时中断';if(state.status){state.status.network.fresh=false;state.status.call_allowed=false;state.status.sms_send_allowed=false;state.status.sms_block_reason='无法确认网络状态，暂时不能发送短信';state.status.call_block_reason='无法确认网络状态，通话控制暂时锁定';state.status.error='与 69 的连接暂时中断，正在显示上次同步的数据';render();}}}
  finally{polling=false;}
 }
@@ -103,7 +103,7 @@ $('#confirm-dial').addEventListener('click',async()=>{if(state.busy)return;const
 $('#login-form').addEventListener('submit',async e=>{e.preventDefault();const button=$('#login-submit');button.disabled=true;$('#login-error').textContent='';try{const s=await api('/api/login','POST',{username:$('#username').value.trim(),password:$('#password').value});state.csrf=s.csrf;$('#password').value='';showApp();await sync();}catch(e){$('#login-error').textContent=e.message;}finally{button.disabled=false;}});
 for(const button of [$('#logout'),$('#mobile-logout')])button.addEventListener('click',async()=>{window.EC20Audio?.reset();try{await api('/api/logout','POST');}catch{}showLogin();});
 $('#refresh').addEventListener('click',()=>{if(state.view==='audio')window.EC20Audio.retry();sync();});
-function changeView(){if(location.hash!=='#audio')window.EC20Audio?.leave();workspaceUI.query='';state.view=Object.hasOwn(titles,location.hash.slice(1))?location.hash.slice(1):'overview';state.viewKey='';render();if(state.logged)loadWorkspace().then(()=>render());if(state.logged&&state.view==='location')loadLocation().then(()=>render());if(state.logged&&state.view==='inbox')loadConversations(true).then(()=>render()).catch(e=>toast(e.message,true));}
+function changeView(){if(location.hash!=='#audio')window.EC20Audio?.leave();workspaceUI.query='';state.view=Object.hasOwn(titles,location.hash.slice(1))?location.hash.slice(1):'overview';state.viewKey='';render();if(state.logged)loadWorkspace().then(()=>render());if(state.logged&&state.view==='forwarding')loadForwarding().then(()=>render());if(state.logged&&state.view==='location')loadLocation().then(()=>render());if(state.logged&&state.view==='inbox')loadConversations(true).then(()=>render()).catch(e=>toast(e.message,true));}
 window.addEventListener('hashchange',changeView);
 icons();changeView();
 (async()=>{try{const s=await api('/api/session');state.csrf=s.csrf;showApp();await sync();}catch{showLogin();}})();

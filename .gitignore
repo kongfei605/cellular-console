@@ -8,3 +8,5 @@ __pycache__/
 bin/
 credentials.json
 *.key
+
+forwarding.json

@@ -147,42 +147,44 @@ func (a *App) sendSMS(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, err.Error())
 		return
 	}
+	record, duplicate, code, err := a.queueSMS(input.RequestID, number, text, info)
+	if err != nil {
+		apiError(w, code, err.Error())
+		return
+	}
+	writeJSON(w, code, map[string]any{"message": record, "duplicate": duplicate})
+}
+
+// Both manual sends and forwarding share this durable queue and all modem guards.
+func (a *App) queueSMS(id, number, text string, info SMSInfo) (OutgoingSMS, bool, int, error) {
 	a.actionMu.Lock()
 	defer a.actionMu.Unlock()
 	a.smsMu.Lock()
 	defer a.smsMu.Unlock()
 	if a.outbox == nil {
-		apiError(w, 503, "本地发送记录不可用")
-		return
+		return OutgoingSMS{}, false, 503, errors.New("本地发送记录不可用")
 	}
-	if prior, ok := a.outbox.Get(input.RequestID); ok {
+	if prior, ok := a.outbox.Get(id); ok {
 		if prior.Number != number || prior.Text != text {
-			apiError(w, 409, "请求标识已用于其他短信，请重新编辑")
-			return
+			return OutgoingSMS{}, false, 409, errors.New("请求标识已用于其他短信，请重新编辑")
 		}
-		writeJSON(w, 200, map[string]any{"message": prior, "duplicate": true})
-		return
+		return prior, true, 200, nil
 	}
 	if a.smsActive || a.locationBusy {
-		apiError(w, 409, "短信或定位设置仍在处理，请稍候")
-		return
+		return OutgoingSMS{}, false, 409, errors.New("短信或定位设置仍在处理，请稍候")
 	}
 	if reason := a.smsAllowed(); reason != "" {
-		apiError(w, 409, reason)
-		return
+		return OutgoingSMS{}, false, 409, errors.New(reason)
 	}
-	record, err := a.outbox.Reserve(input.RequestID, number, text, info)
+	record, err := a.outbox.Reserve(id, number, text, info)
 	if errors.Is(err, errSMSDuplicate) {
-		apiError(w, 409, "相同短信刚刚提交，请先查看会话中的发送状态")
-		return
+		return OutgoingSMS{}, false, 409, errors.New("相同短信刚刚提交，请先查看会话中的发送状态")
 	}
 	if errors.Is(err, errSMSRateLimit) {
-		apiError(w, 429, "一分钟内最多提交5条短信，请稍后重试")
-		return
+		return OutgoingSMS{}, false, 429, errors.New("一分钟内最多提交5条短信，请稍后重试")
 	}
 	if err != nil {
-		apiError(w, 503, "无法保存发送记录，未提交到设备")
-		return
+		return OutgoingSMS{}, false, 503, errors.New("无法保存发送记录，未提交到设备")
 	}
 	a.smsActive = true
 	a.refreshInboxCounts()
@@ -191,7 +193,7 @@ func (a *App) sendSMS(w http.ResponseWriter, r *http.Request) {
 	a.snapshot.SMSBlockReason = "上一条短信仍在处理，请稍候"
 	a.mu.Unlock()
 	go a.sendSMSJob(record)
-	writeJSON(w, 202, map[string]any{"message": record, "duplicate": false})
+	return record, false, 202, nil
 }
 
 func (a *App) sendSMSJob(record OutgoingSMS) {

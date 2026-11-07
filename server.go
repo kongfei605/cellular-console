@@ -26,7 +26,7 @@ import (
 //go:embed web/*
 var assets embed.FS
 
-const version = "1.5.1"
+const version = "1.6.0"
 
 type credentials struct {
 	Username string `json:"username"`
@@ -42,6 +42,8 @@ type loginLimit struct {
 }
 
 type App struct {
+	forwarding          *ForwardStore
+	webhookClient       *http.Client
 	locationObservation locationObserver
 	locationControl     bool
 	locationBusy        bool
@@ -72,6 +74,12 @@ func newApp(backend Backend, inbox *Inbox, creds credentials, failoverPath strin
 	a := &App{backend: backend, inbox: inbox, password: sha256.Sum256([]byte(creds.Password)), username: creds.Username,
 		failoverPath: failoverPath, demo: demo, sessions: map[string]session{}, limits: map[string]loginLimit{},
 		snapshot: Snapshot{Calls: []Call{}, Events: []Event{}, Version: version, Demo: demo, Network: NetworkStatus{Config: defaultNetworkConfig(), Interfaces: []InterfaceStats{}, Samples: []TrafficSample{}, Events: []NetworkEvent{}}}}
+	var forwardErr error
+	a.forwarding, forwardErr = openForwarding(filepath.Dir(inbox.path))
+	if forwardErr != nil {
+		log.Printf("SMS forwarding storage unavailable; forwarding disabled")
+	}
+	a.webhookClient = a.newWebhookClient()
 	var workspaceErr error
 	a.workspace, workspaceErr = openWorkspace(filepath.Dir(inbox.path))
 	if workspaceErr != nil {
@@ -150,6 +158,9 @@ func (a *App) poll(ctx context.Context) {
 	if err == nil && r.Present {
 		var se error
 		added, se = a.inbox.Merge(r.ID, m)
+		if se == nil && a.forwarding != nil {
+			_ = a.forwarding.observe(a.inbox.List(), time.Now().UTC())
+		}
 		if se != nil {
 			problem = "短信本地归档失败，请检查服务日志"
 			log.Printf("inbox persistence: %v", se)
@@ -243,6 +254,7 @@ func (a *App) refreshInboxCounts() {
 }
 
 func (a *App) background(ctx context.Context) {
+	go a.forwardLoop(ctx)
 	a.poll(ctx)
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
@@ -281,10 +293,13 @@ func apiError(w http.ResponseWriter, status int, text string) {
 	writeJSON(w, status, map[string]string{"error": text})
 }
 func readJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	return readJSONSize(w, r, dst, 4096)
+}
+func readJSONSize(w http.ResponseWriter, r *http.Request, dst any, limit int64) error {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		return errors.New("请使用 JSON 请求")
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(dst); err != nil {
@@ -467,6 +482,7 @@ func (a *App) handler() http.Handler {
 	a.workspaceRoutes(mux)
 	a.audioRoutes(mux)
 	a.locationRoutes(mux)
+	a.forwardingRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "version": version})
 	})
