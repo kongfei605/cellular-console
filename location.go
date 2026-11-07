@@ -26,6 +26,9 @@ type Position struct {
 	UTC       time.Time `json:"utc"`
 }
 type LocationStatus struct {
+	Diagnostics       NMEADiagnostics     `json:"diagnostics"`
+	Cache             LocationCacheStatus `json:"cache"`
+	cacheIdentity     string
 	Available         bool      `json:"available"`
 	Capabilities      uint32    `json:"capabilities"`
 	EnabledSources    uint32    `json:"enabled_sources"`
@@ -165,6 +168,13 @@ func nmeaInt(value string, max int) *int {
 	return &n
 }
 func parseNMEA(s *LocationStatus, now time.Time) {
+	defer func() {
+		s.Diagnostics = diagnoseNMEA(s.NMEA, now)
+		if s.SatellitesUsed == nil && s.Diagnostics.GSASatellitesUsed != nil {
+			n := *s.Diagnostics.GSASatellitesUsed
+			s.SatellitesUsed = &n
+		}
+	}()
 	s.Observed = now
 	s.Fix = false
 	s.Position = nil
@@ -303,6 +313,7 @@ func (b *ModemBackend) locationObject(ctx context.Context) (dbus.BusObject, Loca
 	s.Signals = boolProp(props, "SignalsLocation")
 	s.RefreshSeconds = uint32(numProp(props, "GpsRefreshRate"))
 	s.GNSSOn = s.EnabledSources&gpsManaged != 0
+	s.cacheIdentity = owner + ":" + string(path) + ":" + r.ID
 	for _, ifaces := range all {
 		if p := ifaces[destination]; p != nil {
 			s.ManagerVersion = stringProp(p, "Version")
@@ -456,8 +467,10 @@ func (a *App) locationStatus(ctx context.Context) (LocationStatus, error) {
 	}
 	s, e := backend.ReadLocation(ctx)
 	if e != nil {
+		a.locationObservation.reset()
 		return s, e
 	}
+	s.Cache = a.locationObservation.observe(s, s.Observed)
 	f, fe := a.failover()
 	state := a.state()
 	s.ControlEnabled = a.locationControl
@@ -527,6 +540,7 @@ func (a *App) controlLocation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	a.locationObservation.reset()
 	after, e := backend.SetGNSS(ctx, *input.Enabled)
 	if e != nil {
 		apiError(w, 502, "GNSS设置未确认；未重启模块，请先刷新状态，不要连续重试")

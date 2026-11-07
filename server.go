@@ -26,7 +26,7 @@ import (
 //go:embed web/*
 var assets embed.FS
 
-const version = "1.5.0"
+const version = "1.5.1"
 
 type credentials struct {
 	Username string `json:"username"`
@@ -42,29 +42,30 @@ type loginLimit struct {
 }
 
 type App struct {
-	locationControl bool
-	locationBusy    bool
-	audio           *AudioProxy
-	secure          bool
-	publicOrigin    string
-	workspace       *Workspace
-	backend         Backend
-	inbox           *Inbox
-	password        [32]byte
-	username        string
-	failoverPath    string
-	demo            bool
-	mu              sync.RWMutex
-	pollMu          sync.Mutex
-	actionMu        sync.Mutex
-	snapshot        Snapshot
-	sessions        map[string]session
-	limits          map[string]loginLimit
-	network         *NetworkMonitor
-	outbox          *Outbox
-	smsMu           sync.Mutex
-	smsActive       bool
-	smsCursor       int
+	locationObservation locationObserver
+	locationControl     bool
+	locationBusy        bool
+	audio               *AudioProxy
+	secure              bool
+	publicOrigin        string
+	workspace           *Workspace
+	backend             Backend
+	inbox               *Inbox
+	password            [32]byte
+	username            string
+	failoverPath        string
+	demo                bool
+	mu                  sync.RWMutex
+	pollMu              sync.Mutex
+	actionMu            sync.Mutex
+	snapshot            Snapshot
+	sessions            map[string]session
+	limits              map[string]loginLimit
+	network             *NetworkMonitor
+	outbox              *Outbox
+	smsMu               sync.Mutex
+	smsActive           bool
+	smsCursor           int
 }
 
 func newApp(backend Backend, inbox *Inbox, creds credentials, failoverPath string, demo bool) *App {
