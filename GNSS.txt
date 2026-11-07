@@ -53,3 +53,17 @@ EC20 Toolbox — GNSS (v1.5.0)
   location_test.go 覆盖校验和、时间、坐标、缓存不冒充定位、源位保留、权限及网络保护。
   deploy/gnss-probe.py 为 69 的一次性有界探测脚本，运行前必须确认本机配置/目录未重复。
   探测含独立 120 秒恢复任务，恢复原启用源；原始采样只保存在 69 的 root 私有目录。
+
+69 部署验收（2026-11-07）
+  HTTPS 定位页启用→停止→再次启用均已通过，最后保留源掩码 7、广播关闭。
+  实际接收 4 类校验通过的 NMEA，但未取得有效坐标，卫星数量尚无可用报告。
+  原始受控启用测试及最终部署后各完成 70 次网络连续性检查，模块均未重启。
+  最终部署期间同一 SSH 会话收到 240/240 次心跳，最大间隔 1.12 秒。
+  PPP PID/ifindex/IP、USB 编号、MM/NetworkManager/主备/VPN 与音频服务保持原状态。
+  最终 Go race、go vet、9 项 UAC 预备测试及网页脚本语法检查通过。
+  主程序 release 64352fe1c12e48ad；GNSS 代理 release cdf89252821eedc1。
+  网络、TLS、登录凭据、短信/联系人归档及 SIM 短信对象未变。
+  15 分钟独立回滚已在验收期间布防；验收通过后停用，手动回滚保留：
+    sudo python3 /var/lib/ec20-console/backups/gnss-broker-20261107/rollback.py --rollback
+  此命令恢复 v1.4 控制台、原 polkit 规则及源掩码 1，移除 GNSS 代理单元。
+  不重启音频/ModemManager/PPP/NetworkManager/主备/VPN，不覆盖消息归档。

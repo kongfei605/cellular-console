@@ -33,8 +33,8 @@ def rollback():
   assert int(prop(LOC,'Enabled')) in [before['enabled'],before['enabled']|6] and prop(LOC,'SignalsLocation')=='false','external location settings changed; GNSS restoration not attempted'
   cmd('busctl','--timeout=25','call',before['owner'],OBJ,LOC,'Setup','ub',str(before['enabled']),'true' if before['signals'] else 'false',timeout=28)
  except Exception as e:problem=str(e)
- subprocess.run(['systemctl','stop','ec20-gnss-broker.socket','ec20-gnss-broker.service'],check=True)
- subprocess.run(['systemctl','disable','ec20-gnss-broker.socket'],check=True)
+ subprocess.run(['systemctl','stop','ec20-gnss-broker.socket','ec20-gnss-broker.service'],check=False)
+ subprocess.run(['systemctl','disable','ec20-gnss-broker.socket'],check=False)
  for target,name in [(UNIT,'ec20-console.service'),(RULE,'49-ec20-console.rules')]:shutil.copyfile(BACKUP/name,target);os.chmod(target,0o644)
  for n in ['ec20-gnss-broker.service','ec20-gnss-broker.socket']:
   p=Path('/etc/systemd/system')/n
@@ -60,7 +60,8 @@ def preflight():
  baseline=state();assert all(v!='0' for v in baseline['pids'].values());return baseline
 if __name__=='__main__':
  if os.geteuid()!=0:raise SystemExit('sudo required on host 69')
- if '--rollback' in sys.argv:rollback();raise SystemExit(0)
+ if '--rollback' in sys.argv:
+  rollback();subprocess.run(['systemctl','stop','ec20-gnss-web-rollback.timer'],check=False);raise SystemExit(0)
  if '--check-only' in sys.argv:preflight();print('GNSS web upgrade preflight passed; no service changes');raise SystemExit(0)
  baseline=preflight()
  assert not Path('/etc/systemd/system/ec20-gnss-broker.service').exists() and not Path('/run/ec20-gnss-control.sock').exists(),'GNSS broker already installed; use a reviewed update'
