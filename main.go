@@ -115,12 +115,12 @@ func main() {
 			}
 		}
 		redirect = &http.Server{Handler: canonicalRedirect(*publicOrigin), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
-		go func() {
-			if e := redirect.Serve(listener); e != nil && !errors.Is(e, http.ErrServerClosed) {
+		go func(redirectListener net.Listener) {
+			if e := redirect.Serve(redirectListener); e != nil && !errors.Is(e, http.ErrServerClosed) {
 				log.Printf("legacy redirect listener failed: %v", e)
 				stop()
 			}
-		}()
+		}(listener)
 		listener = secureListener
 		server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{tlsPair}}
 	}
