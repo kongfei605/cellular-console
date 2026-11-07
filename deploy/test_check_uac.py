@@ -11,6 +11,9 @@ spec.loader.exec_module(probe)
 
 
 class UACChecks(unittest.TestCase):
+    def test_watchdog_budget_exceeds_serial_window(self):
+        self.assertGreater(probe.RECOVERY_DELAY, probe.STOP_TIMEOUT + len(probe.QUERIES) * probe.QUERY_TIMEOUT + 25)
+
     def test_usb_audio_flag_and_existing_functions(self):
         parsed = probe.parse_usb('+QCFG: "usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,0\r\nOK')
         self.assertTrue(parsed['known'])

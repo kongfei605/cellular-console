@@ -22,6 +22,9 @@ import time
 STATE = Path('/run/ec20-uac-query/state.json')
 TIMER = 'ec20-uac-query-recovery'
 HELPER = '/usr/local/libexec/ec20-check-uac.py'
+STOP_TIMEOUT = 35
+RECOVERY_DELAY = 90
+QUERY_TIMEOUT = 2.5
 QUERIES = ('AT', 'AT+CGMR', 'AT+QCFG="usbcfg"', 'AT+QPCMV=?', 'AT+QPCMV?', 'AT+QDAI?')
 NETWORK_FILES = ('/usr/local/sbin/ec20-failover', '/etc/ec20-failover.json',
                  '/etc/NetworkManager/system-connections/ec20-cellular.nmconnection')
@@ -134,7 +137,7 @@ class ATReader:
         termios.tcflush(self.fd, termios.TCIFLUSH)
         os.write(self.fd, (command + '\r').encode('ascii'))
         data = b''
-        end = time.monotonic() + 2.5
+        end = time.monotonic() + QUERY_TIMEOUT
         while time.monotonic() < end:
             if not select.select([self.fd], [], [], .15)[0]:
                 continue
@@ -212,9 +215,9 @@ def main():
     query_error = None
     restore_started = None
     try:
-        run(['systemd-run', '--unit=' + TIMER, '--on-active=45s', '--timer-property=AccuracySec=1s',
+        run(['systemd-run', '--unit=' + TIMER, '--on-active=' + str(RECOVERY_DELAY) + 's', '--timer-property=AccuracySec=1s',
              '/usr/bin/python3', HELPER, '--recover'])
-        run(['systemctl', 'mask', '--runtime', '--now', 'ModemManager.service'])
+        run(['systemctl', 'mask', '--runtime', '--now', 'ModemManager.service'], timeout=STOP_TIMEOUT)
         if owners(port):
             raise RuntimeError('Secondary port is still owned after stopping ModemManager')
         responses = {}
