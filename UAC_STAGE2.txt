@@ -1,0 +1,65 @@
+EC20 UAC phase 2 — protected read-only capability inspection
+==========================================================
+
+Current hardware: EC20F / EC20CEFAGR08A03M4G, USB 2c7c:0125.
+No EC20 Audio Class interface is currently enumerated. Primary AT is used
+by PPP; secondary AT is open in ModemManager. Raw D-Bus AT is disabled
+outside daemon startup debug mode. Runtime log level cannot enable it.
+
+deploy/check-uac.py defaults to preflight only. It inspects sysfs, process
+ownership and existing failover status; it does not open a serial port or
+change any service. It refuses to work if wired-primary status is stale,
+wired is unhealthy, or any of the three VPNs is unhealthy.
+
+An explicitly approved --allow-mm-reconnect permits a bounded maintenance
+window: arm an independent 45-second systemd recovery timer, temporarily
+mask/stop ModemManager in /run to prevent D-Bus reactivation, exclusively
+open only the EC20 secondary USB interface 03, issue the fixed queries,
+close it, unmask/start the manager and wait for a fresh connected modem
+and healthy PPP standby. NetworkManager/failover/console/VPN units are
+never stopped, restarted or reconfigured by this helper.
+
+Cellular standby WILL be temporarily unavailable during this maintenance.
+Wired and existing VPN routes remain under the unchanged failover service.
+If wired fails in that interval, connectivity cannot be guaranteed. Treat
+this as a user-approved short maintenance window, not a zero-impact probe.
+
+Fixed read-only AT queries:
+  AT
+  AT+CGMR
+  AT+QCFG="usbcfg"
+  AT+QPCMV=?
+  AT+QPCMV?
+  AT+QDAI?
+
+The helper contains no reset/USB-composition/audio-route write operation
+and cannot make a phone call. It refuses unknown USB layouts rather than
+inventing a configuration. AT command forwarding is never left enabled.
+
+After approval, install the reviewed helper root-owned:
+  sudo install -m 0755 deploy/check-uac.py /usr/local/libexec/ec20-check-uac.py
+Preflight:
+  sudo python3 /usr/local/libexec/ec20-check-uac.py
+Approved query window:
+  sudo python3 /usr/local/libexec/ec20-check-uac.py --allow-mm-reconnect
+Inspect /var/lib/ec20-uac-check/query.json (root-only).
+
+Recovery: the finally block and independent timer both unmask the runtime
+mask and start the original ModemManager unit. A successful fresh PPP
+recovery cancels the timer and removes owned maintenance state. If recovery
+is incomplete, the marker/report remain for investigation. The original
+unit and network configuration files are not modified. Manual recovery:
+  sudo python3 /usr/local/libexec/ec20-check-uac.py --recover
+
+No hardware UAC capability result is assumed before those queries succeed.
+If enabling a UAC field requires a module reboot/USB re-enumeration, tell
+the user the exact original/proposed tuple and outage/recovery plan BEFORE
+writing it. The present helper cannot perform that step.
+
+Validation:
+  python3 -m unittest discover -s deploy -p 'test_check_uac.py' -v
+
+References (vendor documents are generic, exact firmware must be queried):
+https://forums.quectel.com/uploads/short-url/79VE3yUZiWsTQ5SQ3GnmxyH3mnW.pdf
+https://quectel.com/content/uploads/2024/02/Quectel_EC2xEG2xEG9xEM05_Series_QCFG_AT_Commands_Manual_V1.0.pdf
+https://github.com/linux-mobile-broadband/ModemManager/blob/1.20.4/src/mm-context.c
