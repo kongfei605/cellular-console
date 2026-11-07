@@ -22,7 +22,7 @@ import (
 //go:embed web/*
 var assets embed.FS
 
-const Version = "0.1.0"
+const Version = "0.2.0"
 const cookieName = "__Host-ec20_audio_session"
 
 type Credentials struct {
@@ -38,13 +38,16 @@ type attempt struct {
 	Expires time.Time
 }
 type Server struct {
-	media    *Media
-	origin   string
-	username string
-	password [32]byte
-	mu       sync.Mutex
-	sessions map[string]session
-	attempts map[string]attempt
+	delegated  bool
+	gatewayKey [32]byte
+	revoked    map[string]time.Time
+	media      *Media
+	origin     string
+	username   string
+	password   [32]byte
+	mu         sync.Mutex
+	sessions   map[string]session
+	attempts   map[string]attempt
 }
 
 func NewServer(media *Media, origin string, creds Credentials) *Server {
@@ -81,6 +84,10 @@ func decode(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
 	return nil
 }
 func (s *Server) auth(r *http.Request) (string, session, bool) {
+	if s.delegated {
+		id, v, ok := s.gatewayIdentity(r)
+		return id, v, ok && !s.isRevoked(id)
+	}
 	c, err := r.Cookie(cookieName)
 	if err != nil {
 		return "", session{}, false
@@ -97,7 +104,7 @@ func (s *Server) protect(fn func(http.ResponseWriter, *http.Request, string, ses
 			failure(w, 401, "请先登录")
 			return
 		}
-		if r.Method != "GET" && (r.Header.Get("Origin") != s.origin || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(v.CSRF)) != 1) {
+		if !s.delegated && r.Method != "GET" && (r.Header.Get("Origin") != s.origin || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(v.CSRF)) != 1) {
 			failure(w, 403, "请求来源或安全令牌无效")
 			return
 		}
@@ -190,6 +197,11 @@ func (s *Server) Handler() http.Handler {
 			failure(w, 400, "音频协商未完成，请检查浏览器是否支持 PCMU/8000")
 			return
 		}
+		if s.delegated && s.isRevoked(id) {
+			s.media.StopOwner(id)
+			failure(w, 401, "session revoked")
+			return
+		}
 		jsonResponse(w, 200, map[string]any{"id": peer, "answer": answer, "max_seconds": 180})
 	}))
 	mux.HandleFunc("POST /api/loopback/stop", s.protect(func(w http.ResponseWriter, r *http.Request, id string, v session) {
@@ -214,11 +226,11 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "microphone=(self), camera=(), geolocation=()")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; media-src 'self' blob:; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'")
-		if r.TLS == nil {
+		if !s.delegated && r.TLS == nil {
 			failure(w, 400, "此服务仅支持 HTTPS")
 			return
 		}
-		if "https://"+r.Host != s.origin {
+		if !s.delegated && "https://"+r.Host != s.origin {
 			failure(w, 421, "访问地址不匹配")
 			return
 		}

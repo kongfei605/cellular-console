@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -24,6 +25,12 @@ func main() {
 	failoverConfig := flag.String("failover-config", "/etc/ec20-failover.json", "read-only failover configuration")
 	deviceID := flag.String("device-id", "", "ModemManager DeviceIdentifier to select")
 	demo := flag.Bool("demo", false, "loopback-only simulated modem; no hardware operations")
+	tlsListen := flag.String("tls-listen", "", "unified HTTPS listen address; HTTP becomes redirects only")
+	tlsCert := flag.String("tls-cert", "", "TLS certificate")
+	tlsKey := flag.String("tls-key", "", "TLS private key")
+	publicOrigin := flag.String("public-origin", "", "canonical HTTPS origin")
+	audioBackend := flag.String("audio-backend", "", "fixed loopback audio control URL")
+	gatewayKey := flag.String("audio-gateway-key", "", "private audio gateway credential file")
 	flag.Parse()
 	if *demo && !strings.HasPrefix(*listen, "127.0.0.1:") {
 		log.Fatal("demo mode must listen on 127.0.0.1")
@@ -47,6 +54,28 @@ func main() {
 	defer backend.Close()
 	app := newApp(backend, inbox, creds, *failover, *demo)
 	app.network.configPath = *failoverConfig
+	var tlsPair tls.Certificate
+	if *tlsListen != "" {
+		if *publicOrigin != "https://"+*tlsListen {
+			log.Fatal("public-origin must exactly match HTTPS listen address")
+		}
+		tlsPair, err = tls.LoadX509KeyPair(*tlsCert, *tlsKey)
+		if err != nil {
+			log.Fatal("load TLS credentials: ", err)
+		}
+		app.secure = true
+		app.publicOrigin = *publicOrigin
+	}
+	if *audioBackend != "" {
+		b, e := os.ReadFile(*gatewayKey)
+		if e != nil {
+			log.Fatal("read private audio credential: ", e)
+		}
+		app.audio, e = newAudioProxy(*audioBackend, strings.TrimSpace(string(b)))
+		if e != nil {
+			log.Fatal(e)
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go app.background(ctx)
@@ -66,15 +95,52 @@ func main() {
 		case <-time.After(5 * time.Second):
 		}
 	}
-	server := &http.Server{Handler: app.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+
+	server := &http.Server{Handler: app.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	var redirect *http.Server
+	if app.secure {
+		var secureListener net.Listener
+		for {
+			secureListener, err = net.Listen("tcp4", *tlsListen)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, syscall.EADDRNOTAVAIL) {
+				log.Fatal("HTTPS listen: ", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+		}
+		redirect = &http.Server{Handler: canonicalRedirect(*publicOrigin), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+		go func() {
+			if e := redirect.Serve(listener); e != nil && !errors.Is(e, http.ErrServerClosed) {
+				log.Printf("legacy redirect listener failed: %v", e)
+				stop()
+			}
+		}()
+		listener = secureListener
+		server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{tlsPair}}
+	}
 	go func() {
 		<-ctx.Done()
 		c, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
+		if redirect != nil {
+			redirect.Shutdown(c)
+		}
 		server.Shutdown(c)
 	}()
-	log.Printf("EC20 Console v%s listening at http://%s (demo=%t)", version, *listen, *demo)
-	if err = server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if app.secure {
+		log.Printf("EC20 Console v%s: HTTPS %s; legacy HTTP redirects %s", version, *tlsListen, *listen)
+		err = server.ServeTLS(listener, "", "")
+	} else {
+		log.Printf("EC20 Console v%s listening at http://%s (demo=%t)", version, *listen, *demo)
+		err = server.Serve(listener)
+	}
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(fmt.Errorf("HTTP server: %w", err))
 	}
 }

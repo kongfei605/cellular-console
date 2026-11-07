@@ -120,7 +120,7 @@ func (a *App) diagnostics() map[string]any {
 	return map[string]any{"generated_at": time.Now().UTC(), "snapshot": s, "runtime": runtime.Version(), "platform": runtime.GOOS + "/" + runtime.GOARCH, "workspace_error": problem, "privacy": "不包含号码、短信正文、联系人、设备唯一标识或密码；包含IP地址与网络健康信息", "capabilities": []map[string]string{
 		{"name": "设备 / SIM / 信号", "status": "只读状态", "detail": "复用现有 ModemManager 采样，不打开串口"},
 		{"name": "网络 / VPN / 流量", "status": "只读状态", "detail": "读取主备控制器状态与接口计数，不执行额外探测"},
-		{"name": "浏览器音频回环", "status": "独立服务已验证", "detail": "HTTPS 8788；浏览器—69软件回环，尚未连接EC20通话音频"},
+		{"name": "浏览器音频回环", "status": "独立服务已验证", "detail": "统一HTTPS入口内的音频页；内部进程隔离，尚未连接EC20通话音频"},
 		{"name": "真实通话音频 / UAC", "status": "待现场支持", "detail": "预备代码未启用；需现场确认声卡、音频能力和重启维护窗口"},
 		{"name": "定位 / GNSS", "status": "未启用", "detail": loc},
 		{"name": "eSTK 配置管理", "status": "能力未验证", "detail": "尚未确认SIM及配套接口；没有配置文件写入入口"},

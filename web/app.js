@@ -6,9 +6,9 @@ const $=(q)=>document.querySelector(q);
 const esc=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const state={logged:false,csrf:'',status:null,conversations:[],detail:null,view:'overview',selected:null,search:'',unread:false,phone:'',busy:false,authEpoch:0,viewKey:''};
 let polling=false,toastTimer;
-const titles={overview:'总览',network:'网络诊断',inbox:'短信会话',calls:'通话控制',history:'通话记录',contacts:'联系人',diagnostics:'诊断与能力',settings:'设置'};
+const titles={overview:'总览',network:'网络诊断',inbox:'短信会话',calls:'通话控制',audio:'音频实验室',history:'通话记录',contacts:'联系人',diagnostics:'诊断与能力',settings:'设置'};
 function toast(text,error=false){const e=$('#toast');e.textContent=text;e.classList.toggle('error',error);e.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.hidden=true,4500);}
-function showLogin(){state.logged=false;state.authEpoch++;state.csrf='';state.conversations=[];state.detail=null;state.status=null;state.viewKey='';$('#global-calls').hidden=true;state.selected=null;state.phone='';resetSMSComposer();resetWorkspace();$('#main').textContent='';$('#app').hidden=true;$('#login').hidden=false;$('#password').value='';if($('#dial-dialog').open)$('#dial-dialog').close();}
+function showLogin(){state.logged=false;state.authEpoch++;state.csrf='';state.conversations=[];state.detail=null;state.status=null;state.viewKey='';$('#global-calls').hidden=true;state.selected=null;state.phone='';resetSMSComposer();resetWorkspace();window.EC20Audio?.reset();$('#audio-pane').hidden=true;$('#main').hidden=false;$('#main').textContent='';$('#app').hidden=true;$('#login').hidden=false;$('#password').value='';if($('#dial-dialog').open)$('#dial-dialog').close();}
 function showApp(){state.logged=true;state.authEpoch++;$('#login').hidden=true;$('#app').hidden=false;$('#login-error').textContent='';}
 async function api(path,method='GET',body){
  const opts={method,credentials:'same-origin',headers:{}};
@@ -54,6 +54,7 @@ function renderGlobal(){
  const bar=$('#global-calls');bar.hidden=active.length===0;
  if(active.length){const c=active[0];bar.innerHTML=`<span class="global-call-icon">${icon('phone')}</span><div class="global-call-info"><strong>${esc(c.state)} · ${esc(personName(c.number))}</strong><small>${c.direction==='incoming'?'呼入':'呼出'}${active.length>1?` · 另有 ${active.length-1} 个呼叫`:''} · 本版仅提供呼叫控制</small></div><a class="button secondary call-details" href="#calls">查看详情</a>${c.state_code===3&&c.direction==='incoming'?`<button class="button primary" data-call="${c.id}" data-action="accept" ${!s.call_allowed||state.busy?'disabled':''}>接听</button>`:''}<button class="button danger" data-call="${c.id}" data-action="hangup" ${state.busy?'disabled':''}>${c.state_code===3?'拒接':'挂断'}</button>`;}
 }
+window.ec20ConsoleAPI=api;
 function render(force=false){
  if(!state.logged)return;
  document.querySelectorAll('[data-view]').forEach(e=>e.classList.toggle('active',e.dataset.view===state.view));
@@ -65,6 +66,7 @@ function render(force=false){
  $('#sidebar-network').textContent=!state.status.network.fresh?'主备状态待确认':state.status.failover.active==='wired'?'有线主用 · 蜂窝备用':'蜂窝接管 · 网络保护';
  $('#demo-badge').hidden=!state.status.demo;$('#app-version').textContent='v'+state.status.version;
  $('#footer-update').textContent=`最近同步 ${dateText(state.status.updated)} · 每 ${preferences.refresh} 秒页面更新`;
+ $('#main').hidden=state.view==='audio';$('#audio-pane').hidden=state.view!=='audio';if(state.view==='audio'){window.EC20Audio.enter();return;}
  const key=state.view==='settings'?JSON.stringify([state.view,preferences]):state.view==='inbox'?JSON.stringify([state.view,state.status.error,state.status.radio.present,state.status.sms_send_allowed,state.status.sms_block_reason,state.conversations,state.detail,state.search,state.unread,workspaceUI.contacts,workspaceUI.trash]):'';
  if(!force&&key&&key===state.viewKey)return;state.viewKey=key;
  const focus=document.activeElement,id=focus?.id,start=focus?.selectionStart,end=focus?.selectionEnd;
@@ -98,9 +100,9 @@ document.addEventListener('input',e=>{if(e.target.id==='search'){state.search=e.
 $('#cancel-dial').addEventListener('click',()=>$('#dial-dialog').close());
 $('#confirm-dial').addEventListener('click',async()=>{if(state.busy)return;const number=$('#confirm-number').textContent;$('#dial-dialog').close();state.busy=true;render();try{await api('/api/calls','POST',{number});toast('拨号请求已提交');state.phone='';const next=await api('/api/status');if(state.logged&&(!state.status||new Date(next.updated)>=new Date(state.status.updated)))state.status=next;}catch(e){toast(e.message,true);}finally{state.busy=false;render();}});
 $('#login-form').addEventListener('submit',async e=>{e.preventDefault();const button=$('#login-submit');button.disabled=true;$('#login-error').textContent='';try{const s=await api('/api/login','POST',{username:$('#username').value.trim(),password:$('#password').value});state.csrf=s.csrf;$('#password').value='';showApp();await sync();}catch(e){$('#login-error').textContent=e.message;}finally{button.disabled=false;}});
-$('#logout').addEventListener('click',async()=>{try{await api('/api/logout','POST');}catch{}showLogin();});
-$('#refresh').addEventListener('click',()=>sync());
-function changeView(){workspaceUI.query='';state.view=Object.hasOwn(titles,location.hash.slice(1))?location.hash.slice(1):'overview';state.viewKey='';render();if(state.logged)loadWorkspace().then(()=>render());if(state.logged&&state.view==='inbox')loadConversations(true).then(()=>render()).catch(e=>toast(e.message,true));}
+for(const button of [$('#logout'),$('#mobile-logout')])button.addEventListener('click',async()=>{window.EC20Audio?.reset();try{await api('/api/logout','POST');}catch{}showLogin();});
+$('#refresh').addEventListener('click',()=>{if(state.view==='audio')window.EC20Audio.retry();sync();});
+function changeView(){if(location.hash!=='#audio')window.EC20Audio?.leave();workspaceUI.query='';state.view=Object.hasOwn(titles,location.hash.slice(1))?location.hash.slice(1):'overview';state.viewKey='';render();if(state.logged)loadWorkspace().then(()=>render());if(state.logged&&state.view==='inbox')loadConversations(true).then(()=>render()).catch(e=>toast(e.message,true));}
 window.addEventListener('hashchange',changeView);
 icons();changeView();
 (async()=>{try{const s=await api('/api/session');state.csrf=s.csrf;showApp();await sync();}catch{showLogin();}})();

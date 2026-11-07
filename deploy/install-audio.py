@@ -11,6 +11,8 @@ if os.geteuid() != 0:
     raise SystemExit('Run with sudo')
 binary = Path(sys.argv[1]).resolve()
 unit = Path(sys.argv[2]).resolve()
+if '-gateway-key' in unit.read_text():
+    raise SystemExit('Integrated gateway unit requires unify-web.py; refusing a partial audio-only migration')
 root = Path('/opt/ec20-audio-loopback')
 config = Path('/etc/ec20-audio-loopback')
 if not Path('/etc/ec20-console/credentials.json').is_file():

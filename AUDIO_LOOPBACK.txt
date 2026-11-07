@@ -1,113 +1,82 @@
-EC20 Toolbox — HTTPS / WebRTC Audio Loopback 0.1.0
-================================================
+EC20 Toolbox — unified HTTPS audio integration 1.4.0 / audio backend 0.2.0
+============================================================================
 
-This is phase one: browser -> host 69 -> browser software audio echo.
-It does not access EC20, ModemManager, serial ports, ALSA, SMS, PPP or routes.
-It does not yet carry cellular-call audio.
+Canonical entry: https://192.0.2.10:8788/
+Audio page:      https://192.0.2.10:8788/#audio
+One console login, one Secure/HttpOnly/SameSite=Strict __Host-ec20_session cookie.
+The existing admin password, TLS leaf certificate and client trust are retained.
+Old console/audio sessions require one fresh login after the upgrade.
 
-Access and operation
---------------------
-Open https://192.0.2.10:8788/ over the existing VPN.
-Use the existing administrator username/password from the main console.
-The service reads those credentials through systemd LoadCredential, without
-changing the original file or its permissions. Sessions use a separate,
-Secure/HttpOnly/SameSite=Strict __Host-ec20_audio_session cookie.
+Architecture
+------------
+Browser -- HTTPS8788 --> ec20-console (login, CSRF, application UI)
+                            | authenticated fixed HTTP control calls
+                            v
+                    127.0.0.1:8790 ec20-audio-loopback (separate process)
+Browser <-------- VPN UDP8789 / DTLS-SRTP --------> audio backend
 
-Run the 440Hz test first. The browser creates a sine wave that is sent only
-over WebRTC; the local oscillator is NOT connected to the local speakers.
-The returned stream is analysed for its frequency/level and played through
-an audio element. A passing result needs sustained returned signal near
-440Hz and packets in both directions. The test stops after 20 seconds.
+The browser never receives the private gateway key. Both services load that key
+through systemd LoadCredential. The audio service does not read the admin password
+or TLS private key. It retains DynamicUser, PrivateDevices, no capabilities,
+read-only filesystem and no AF_UNIX/system-D-Bus access.
+The main console receives TLS credentials through systemd; original files stay
+root-private and unchanged. No certificate replacement or insecure TLS bypass.
 
-For microphone echo, use headphones, grant the site microphone permission,
-and speak. Returned packet/signal detection verifies media connectivity;
-the human listener must assess audibility and quality. Mute and volume
-controls affect returned playback. No audio is recorded or persisted.
+The gateway accepts only fixed routes and a literal loopback upstream. It ignores
+client identity headers and forwards only authenticated console owner/expiry.
+Internal requests require a private key and a loopback peer. Old identity headers,
+expired/revoked sessions, wrong Origin, missing CSRF and oversized SDP are rejected.
+Logout revokes the owner and releases audio, including offers still being created.
+An unavailable audio backend returns503 only for audio; console/network work stays
+independent. Page navigation stops capture; normal 5-second console polling keeps
+the media DOM mounted. Refresh can discover/release a prior owned media slot.
 
-Only one browser session can hold a media slot. Another browser receives
-HTTP 409. Stop/logout releases it; no incoming media for 30 seconds also
-releases it. Absolute server maximum is 3 minutes. The browser stops mic
-echo after 175 seconds. Reload detects an owned outstanding session and
-provides a stop button. Page exit requests cleanup; server expiry is the
-fallback if the browser cannot send that request.
+Compatibility
+-------------
+http://192.0.2.10:8787/ redirects GET/HEAD to canonical HTTPS, preserving path/query
+and the browser's original fragment. Plaintext mutations receive426; refresh the
+old page instead of posting credentials or actions through HTTP.
+The former https://192.0.2.10:8788/ audio bookmark opens the unified console;
+choose Audio Lab in the sidebar. /audio, /audio/, /audio-lab redirect to /#audio.
+Legacy /api/loopback and /api/loopback/stop aliases continue under console auth.
+The old __Host-ec20_audio_session cookie is ignored; there is no second login.
+UDP8789 is still needed for media; it is not a second web UI entry point.
 
-TLS trust
+Operation
 ---------
-The installer creates one self-signed ECDSA server certificate, valid for
-180 days, with SAN IP:192.0.2.10 and serverAuth usage; CA:FALSE.
-Private key stays on host 69 at /etc/ec20-audio-loopback/server.key (0600),
-inside a root-only directory. Never commit or copy that key to clients.
+440Hz tone: no microphone permission required, server round trip analysed,20s max.
+Microphone echo: use headphones, grant existing site microphone permission.
+Every session: at most3min, no media30s -> release, one slot, owner-scoped stop.
+Mute/volume affect returned playback. No recording or audio persistence.
+This is browser<->69 software echo, NOT EC20 cellular call audio. No ALSA, serial,
+modem commands, module reset, routing changes or raw AT are involved.
+Main login is8h. Audio expiry is bounded by that session and the3min media limit.
+Main console restart invalidates its sessions; any orphan media expires within
+its existing timeout. Re-login and retry after release; no automatic mic start.
 
-Only the public certificate must be trusted on a client. Verify its SHA256
-fingerprint through SSH before installing trust. macOS user-level SSL trust:
+Build and deployment
+--------------------
+make test; make build; make build-audio
+Build probe: go build -o bin/ec20-audio-probe ./cmd/ec20-audio-probe
+Upload binaries, both units and deploy/unify-web.py together to a staging directory.
+Run sudo python3 unify-web.py --check-only, then sudo python3 unify-web.py.
+This migration is for the existing69 installation and retains a dated private
+backup. It refuses duplicate backup/occupied internal port or active media/calls.
+It updates/restarts only ec20-console and ec20-audio-loopback, with a10min timer.
+Verify first, then stop ec20-web-unify-rollback.timer.
+Rollback: sudo python3 /var/lib/ec20-console/backups/https-unified-20261107/rollback.py --rollback
+Rollback restores old web units/binaries and ports, retains all data/TLS files,
+and does not restart failover, NetworkManager, ModemManager or VPN services.
+The old install-audio.py is a legacy standalone installer; do not use it with the
+new gateway unit. Integrated upgrades use unify-web.py and then controlled web
+release changes retaining the two-service sandbox.
 
-  security add-trusted-cert -r trustRoot -p ssl \
-    -k "$HOME/Library/Keychains/login.keychain-db" server.crt
+Synthetic live verification
+---------------------------
+ssh -i ~/.ssh/example.pem operator@192.0.2.10 'sudo cat /etc/ec20-console/credentials.json' |
+  bin/ec20-audio-probe -cert server.crt
+Credentials are read from stdin only. The probe trusts the explicit public cert,
+logs into the unified console, uses the compatible signalling routes, requires
+70/80 identical PCMU payload returns, stops and logs out. No microphone or EC20.
 
-macOS may require the user's system authorization. Hostname-specific policy
-strings were not recognised by the tested Chromium verifier, so trust uses
-the SSL policy and the certificate SAN restricts the server identity to 69.
-No certificate validation bypass or insecure browser flag is used.
-Other clients need their own trust setup. Renewal/replacement requires
-redistributing the new public certificate; the installer never silently
-overwrites an existing key/certificate. Expiry is intentionally visible.
-
-To remove this client trust later, remove this exact certificate in Keychain
-Access (identify by fingerprint), or use security remove-trusted-cert with
-the saved public certificate. This does not remove other user certificates.
-
-Transport and authentication
-----------------------------
-HTTPS TCP 8788 and one ICE UDP mux port 8789 bind only to 192.0.2.10.
-Only IPv4 VPN host candidates are advertised. No public STUN/TURN servers
-are configured; VPN routing must allow browser UDP traffic to 8789.
-The existing HTTP console on 8787 stays unchanged and independent.
-Audio uses PCMU/8000/1 over DTLS-SRTP. The server reflects encoded PCMU RTP
-payloads, rewriting transport headers through Pion. This stage does NOT
-implement a PCM codec/ALSA adapter for EC20. That is a subsequent phase.
-Login is rate limited. Mutations require exact HTTPS Origin plus CSRF token.
-Offers are bounded to one sendrecv audio m-line. Media statistics and stop
-requests are scoped to the owning authenticated session. A distinct peer
-token is checked before stopping. Expired/logged-out sessions release media.
-
-Service isolation and deployment
---------------------------------
-Build:
-  make test
-  make build-audio
-
-Install the binary and unit on host 69 using:
-  sudo python3 deploy/install-audio.py <binary> deploy/ec20-audio-loopback.service
-
-The installer only starts/restarts ec20-audio-loopback.service. It never
-restarts ec20-console, ec20-failover, NetworkManager or ModemManager.
-Versioned executable directories are /opt/ec20-audio-loopback/releases/.
-current/previous symlinks retain rollback targets on subsequent upgrades.
-
-The systemd unit uses DynamicUser, private devices, a read-only filesystem,
-no capabilities and no AF_UNIX socket support. Credentials are copied into
-the service's private credential directory by systemd. It cannot open the
-system D-Bus or physical serial/audio devices through this service sandbox.
-
-Status:   sudo systemctl status ec20-audio-loopback --no-pager
-Logs:     sudo journalctl -u ec20-audio-loopback -n 30 --no-pager
-Disable:  sudo systemctl disable --now ec20-audio-loopback
-Disabling this service has no effect on the main console or EC20 failover.
-
-Reproducible live synthetic probe
---------------------------------
-  go build -o bin/ec20-audio-probe ./cmd/ec20-audio-probe
-  ssh -i ~/.ssh/example.pem operator@192.0.2.10 \
-    'sudo cat /etc/ec20-console/credentials.json' | \
-    bin/ec20-audio-probe -cert server.crt
-
-The probe reads credentials only from stdin, verifies TLS with the explicit
-certificate, negotiates ICE/DTLS-SRTP and sends 80 synthetic PCMU payloads.
-It requires at least 70 byte-identical returns, reports no secrets, and
-stops/logs out. Allowance covers startup/teardown packet loss; this is not a
-network packet-loss benchmark. The probe does not access a microphone.
-
-License texts: THIRD_PARTY_AUDIO_NOTICES.txt (pinned dependency modules).
-Pion project: https://github.com/pion/webrtc
-Codec standard: https://www.rfc-editor.org/rfc/rfc7874.html
-Browser media API: https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia
+License: THIRD_PARTY_AUDIO_NOTICES.txt. Prepared UAC/PCM code remains unenabled.

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,18 +25,39 @@ func main() {
 	cert := flag.String("cert", "/etc/ec20-audio-loopback/server.crt", "TLS leaf certificate")
 	key := flag.String("key", "/etc/ec20-audio-loopback/server.key", "TLS private key")
 	credsPath := flag.String("credentials", "/etc/ec20-console/credentials.json", "existing administrator credentials")
+	gatewayKey := flag.String("gateway-key", "", "private console gateway key; enables loopback HTTP control only")
 	flag.Parse()
+
 	var creds audioloop.Credentials
-	b, err := os.ReadFile(*credsPath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if json.Unmarshal(b, &creds) != nil || creds.Username == "" || len(creds.Password) < 12 {
-		log.Fatal("invalid credentials")
-	}
-	pair, err := tls.LoadX509KeyPair(*cert, *key)
-	if err != nil {
-		log.Fatal(err)
+	var pair tls.Certificate
+	var err error
+	var sharedKey string
+	if *gatewayKey != "" {
+		host, _, e := net.SplitHostPort(*listen)
+		ip := net.ParseIP(host)
+		if e != nil || ip == nil || !ip.IsLoopback() {
+			log.Fatal("gateway control listener must bind a literal loopback address")
+		}
+		b, e := os.ReadFile(*gatewayKey)
+		if e != nil {
+			log.Fatal("read gateway credential: ", e)
+		}
+		sharedKey = strings.TrimSpace(string(b))
+		if len(sharedKey) < 32 {
+			log.Fatal("invalid gateway credential")
+		}
+	} else {
+		b, e := os.ReadFile(*credsPath)
+		if e != nil {
+			log.Fatal(e)
+		}
+		if json.Unmarshal(b, &creds) != nil || creds.Username == "" || len(creds.Password) < 12 {
+			log.Fatal("invalid credentials")
+		}
+		pair, err = tls.LoadX509KeyPair(*cert, *key)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -61,9 +83,18 @@ func main() {
 		}
 	}
 	defer media.Close()
-	app := audioloop.NewServer(media, *origin, creds)
+	var handler http.Handler
+	if *gatewayKey != "" {
+		app, e := audioloop.NewGatewayServer(media, sharedKey)
+		if e != nil {
+			log.Fatal(e)
+		}
+		handler = app.GatewayHandler()
+	} else {
+		handler = audioloop.NewServer(media, *origin, creds).Handler()
+	}
 	creds.Password = ""
-	srv := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384,
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384,
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}}
 	go func() {
 		ticker := time.NewTicker(time.Second)
@@ -80,8 +111,13 @@ func main() {
 			}
 		}
 	}()
-	log.Printf("EC20 audio loopback %s: HTTPS %s, UDP %s, no hardware access", audioloop.Version, *listen, *mediaBind)
-	err = srv.ServeTLS(listener, "", "")
+	if *gatewayKey != "" {
+		log.Printf("EC20 audio loopback %s: private HTTP %s, UDP %s, gateway authentication, no hardware access", audioloop.Version, *listen, *mediaBind)
+		err = srv.Serve(listener)
+	} else {
+		log.Printf("EC20 audio loopback %s: HTTPS %s, UDP %s, no hardware access", audioloop.Version, *listen, *mediaBind)
+		err = srv.ServeTLS(listener, "", "")
+	}
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}

@@ -26,7 +26,7 @@ import (
 //go:embed web/*
 var assets embed.FS
 
-const version = "1.3.0"
+const version = "1.4.0"
 
 type credentials struct {
 	Username string `json:"username"`
@@ -42,6 +42,9 @@ type loginLimit struct {
 }
 
 type App struct {
+	audio        *AudioProxy
+	secure       bool
+	publicOrigin string
 	workspace    *Workspace
 	backend      Backend
 	inbox        *Inbox
@@ -296,10 +299,14 @@ func sameOrigin(r *http.Request) bool {
 		return true
 	}
 	u, err := url.Parse(origin)
-	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host == r.Host
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return err == nil && u.Scheme == scheme && u.Host == r.Host
 }
 func (a *App) authenticate(r *http.Request) (string, session, bool) {
-	c, err := r.Cookie("ec20_session")
+	c, err := r.Cookie(a.sessionCookieName())
 	if err != nil {
 		return "", session{}, false
 	}
@@ -375,7 +382,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	s := session{CSRF: randomToken(), Expires: time.Now().Add(8 * time.Hour)}
 	a.sessions[token] = s
 	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "ec20_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil, MaxAge: 28800})
+	http.SetCookie(w, &http.Cookie{Name: a.sessionCookieName(), Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil, MaxAge: 28800})
 	writeJSON(w, 200, map[string]any{"username": a.username, "csrf": s.CSRF, "demo": a.demo})
 }
 
@@ -455,6 +462,7 @@ func (a *App) voiceAction(w http.ResponseWriter, r *http.Request) {
 func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
 	a.workspaceRoutes(mux)
+	a.audioRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "version": version})
 	})
@@ -464,11 +472,12 @@ func (a *App) handler() http.Handler {
 		writeJSON(w, 200, map[string]any{"username": a.username, "csrf": s.CSRF, "demo": a.demo})
 	}))
 	mux.HandleFunc("POST /api/logout", a.protected(func(w http.ResponseWriter, r *http.Request) {
-		token, _, _ := a.authenticate(r)
+		token, currentSession, _ := a.authenticate(r)
 		a.mu.Lock()
 		delete(a.sessions, token)
 		a.mu.Unlock()
-		http.SetCookie(w, &http.Cookie{Name: "ec20_session", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+		a.releaseAudio(token, currentSession.Expires)
+		http.SetCookie(w, &http.Cookie{Name: a.sessionCookieName(), Path: "/", MaxAge: -1, Secure: a.secure, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	}))
 	mux.HandleFunc("GET /api/status", a.protected(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.state()) }))
@@ -547,8 +556,13 @@ func (a *App) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'")
 		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Permissions-Policy", "microphone=(self), camera=(), geolocation=()")
+		if a.secure && (r.TLS == nil || "https://"+r.Host != a.publicOrigin) {
+			apiError(w, 421, "请使用统一HTTPS入口")
+			return
+		}
 		mux.ServeHTTP(w, r)
 	})
 }
