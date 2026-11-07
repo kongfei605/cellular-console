@@ -1,8 +1,10 @@
-// This account can control voice calls, but cannot disable/reset the modem,
-// edit network connections, flash firmware, or send SMS through privileged methods.
+// Voice and Messaging are ModemManager's coarse authorizations. The application
+// only exposes SMS Create/Send/state and voice control, never SMS deletion or
+// storage changes. No Device.Control/network/firmware privileges are granted.
 polkit.addRule(function(action, subject) {
     if (subject.user === "ec20-console" &&
-        action.id === "org.freedesktop.ModemManager1.Voice") {
+        (action.id === "org.freedesktop.ModemManager1.Voice" ||
+         action.id === "org.freedesktop.ModemManager1.Messaging")) {
         return polkit.Result.YES;
     }
 });

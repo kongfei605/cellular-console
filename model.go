@@ -65,13 +65,16 @@ type Radio struct {
 }
 
 type Message struct {
-	ID        string    `json:"id"`
-	Sender    string    `json:"sender"`
-	Text      string    `json:"text"`
-	Timestamp string    `json:"timestamp"`
-	FirstSeen time.Time `json:"first_seen"`
-	Read      bool      `json:"read"`
-	Source    string    `json:"source,omitempty"`
+	ID         string    `json:"id"`
+	Sender     string    `json:"sender"`
+	Text       string    `json:"text"`
+	Timestamp  string    `json:"timestamp"`
+	FirstSeen  time.Time `json:"first_seen"`
+	Read       bool      `json:"read"`
+	Source     string    `json:"source,omitempty"`
+	Direction  string    `json:"direction,omitempty"`
+	SendStatus string    `json:"send_status,omitempty"`
+	SendError  string    `json:"send_error,omitempty"`
 }
 
 type Call struct {
@@ -104,6 +107,8 @@ type Snapshot struct {
 	Version          string        `json:"version"`
 	LastModemSuccess time.Time     `json:"last_modem_success"`
 	Network          NetworkStatus `json:"network"`
+	SMSSendAllowed   bool          `json:"sms_send_allowed"`
+	SMSBlockReason   string        `json:"sms_block_reason"`
 }
 
 type Inbox struct {

@@ -26,7 +26,7 @@ import (
 //go:embed web/*
 var assets embed.FS
 
-const version = "1.1.0"
+const version = "1.2.0"
 
 type credentials struct {
 	Username string `json:"username"`
@@ -55,6 +55,10 @@ type App struct {
 	sessions     map[string]session
 	limits       map[string]loginLimit
 	network      *NetworkMonitor
+	outbox       *Outbox
+	smsMu        sync.Mutex
+	smsActive    bool
+	smsCursor    int
 }
 
 func newApp(backend Backend, inbox *Inbox, creds credentials, failoverPath string, demo bool) *App {
@@ -62,6 +66,11 @@ func newApp(backend Backend, inbox *Inbox, creds credentials, failoverPath strin
 		failoverPath: failoverPath, demo: demo, sessions: map[string]session{}, limits: map[string]loginLimit{},
 		snapshot: Snapshot{Calls: []Call{}, Events: []Event{}, Version: version, Demo: demo, Network: NetworkStatus{Config: defaultNetworkConfig(), Interfaces: []InterfaceStats{}, Samples: []TrafficSample{}, Events: []NetworkEvent{}}}}
 	a.network = newNetworkMonitor(filepath.Dir(inbox.path), "/etc/ec20-failover.json")
+	var outboxErr error
+	a.outbox, outboxErr = openOutbox(filepath.Dir(inbox.path))
+	if outboxErr != nil {
+		log.Printf("SMS outbox unavailable: %v", outboxErr)
+	}
 	if demo {
 		start := time.Now()
 		a.network.read = func(name string) (counterReading, error) {
@@ -133,9 +142,29 @@ func (a *App) poll(ctx context.Context) {
 		problem = "自动备用网络状态不可用，通话控制已锁定"
 	}
 	messageCount, unread := a.inbox.Counts()
+	if a.outbox != nil {
+		messageCount += len(a.outbox.List())
+	}
 	if c == nil {
 		c = []Call{}
 	}
+	smsReason := smsPolicy(r, f, fe, c, time.Now().UTC())
+	if err != nil {
+		smsReason = "调制解调器状态暂时不可用"
+	}
+	if a.outbox == nil {
+		smsReason = "本地发送记录不可用"
+	} else if a.outbox.LastError() != nil {
+		smsReason = "发送记录写入异常，请检查存储"
+	}
+	if _, ok := a.backend.(SMSBackend); !ok {
+		smsReason = "当前后端未提供短信发送"
+	}
+	a.smsMu.Lock()
+	if a.smsActive {
+		smsReason = "上一条短信仍在处理，请稍候"
+	}
+	a.smsMu.Unlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	previous := a.snapshot
@@ -178,10 +207,15 @@ func (a *App) poll(ctx context.Context) {
 	a.snapshot = Snapshot{Radio: r, Failover: f, Calls: c, Events: events, MessageCount: messageCount, UnreadCount: unread,
 		CallAllowed: reason == "", CallBlockReason: reason, Error: problem, Updated: time.Now().UTC(), Version: version, Demo: a.demo,
 		LastModemSuccess: lastSuccess, Network: netStatus}
+	a.snapshot.SMSSendAllowed = smsReason == ""
+	a.snapshot.SMSBlockReason = smsReason
 }
 
 func (a *App) refreshInboxCounts() {
 	count, unread := a.inbox.Counts()
+	if a.outbox != nil {
+		count += len(a.outbox.List())
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.snapshot.MessageCount = count
@@ -198,6 +232,7 @@ func (a *App) background(ctx context.Context) {
 			return
 		case <-t.C:
 			a.poll(ctx)
+			a.reconcileSMS(ctx)
 		}
 	}
 }
@@ -358,6 +393,13 @@ func (a *App) voiceAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if action != "hangup" {
+		a.smsMu.Lock()
+		smsBusy := a.smsActive
+		a.smsMu.Unlock()
+		if smsBusy {
+			apiError(w, 409, "短信请求正在处理，请稍候再拨号或接听")
+			return
+		}
 		f, err := a.failover()
 		s := a.state()
 		reason := callPolicy(s.Radio, f, err)
@@ -415,17 +457,25 @@ func (a *App) handler() http.Handler {
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	}))
 	mux.HandleFunc("GET /api/status", a.protected(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.state()) }))
-	mux.HandleFunc("GET /api/messages", a.protected(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.inbox.List()) }))
+	mux.HandleFunc("GET /api/messages", a.protected(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, a.allMessages()) }))
+	mux.HandleFunc("POST /api/sms", a.protected(a.sendSMS))
+	mux.HandleFunc("GET /api/outbox", a.protected(func(w http.ResponseWriter, r *http.Request) {
+		if a.outbox == nil {
+			apiError(w, 503, "发送记录不可用")
+			return
+		}
+		writeJSON(w, 200, a.outbox.List())
+	}))
 	mux.HandleFunc("GET /api/conversations", a.protected(func(w http.ResponseWriter, r *http.Request) {
 		query := strings.TrimSpace(r.URL.Query().Get("q"))
 		if len(query) > 600 {
 			apiError(w, 400, "搜索内容过长")
 			return
 		}
-		writeJSON(w, 200, a.inbox.Conversations(query, r.URL.Query().Get("unread") == "1"))
+		writeJSON(w, 200, conversationsFor(a.allMessages(), query, r.URL.Query().Get("unread") == "1"))
 	}))
 	mux.HandleFunc("GET /api/conversations/{id}", a.protected(func(w http.ResponseWriter, r *http.Request) {
-		d, err := a.inbox.Conversation(r.PathValue("id"))
+		d, err := conversationFor(a.allMessages(), r.PathValue("id"))
 		if err != nil {
 			apiError(w, 404, "会话不存在")
 			return
@@ -434,6 +484,12 @@ func (a *App) handler() http.Handler {
 	}))
 	mux.HandleFunc("POST /api/conversations/{id}/read", a.protected(func(w http.ResponseWriter, r *http.Request) {
 		err := a.inbox.MarkConversationRead(r.PathValue("id"))
+		if errors.Is(err, os.ErrNotExist) {
+			_, present := conversationFor(a.allMessages(), r.PathValue("id"))
+			if present == nil {
+				err = nil
+			}
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			apiError(w, 404, "会话不存在")
 			return

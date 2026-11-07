@@ -57,7 +57,7 @@ func summarizeConversation(messages []Message) Conversation {
 	c := Conversation{ID: conversationID(messages[0].Sender), Sender: canonicalSender(messages[0].Sender), Numbers: []string{}, Count: len(messages)}
 	seen := map[string]bool{}
 	for _, m := range messages {
-		if !m.Read {
+		if !m.Read && m.Direction != "outgoing" {
 			c.Unread++
 		}
 		if !seen[m.Sender] {
@@ -67,6 +67,9 @@ func summarizeConversation(messages []Message) Conversation {
 		if c.LastAt.IsZero() || messageTime(m).After(c.LastAt) {
 			c.LastAt = messageTime(m)
 			c.Preview = m.Text
+			if m.Direction == "outgoing" {
+				c.Preview = "我：" + m.Text
+			}
 		}
 	}
 	sort.Strings(c.Numbers)
@@ -74,7 +77,9 @@ func summarizeConversation(messages []Message) Conversation {
 }
 
 func (s *Inbox) Conversations(query string, unreadOnly bool) []Conversation {
-	items := s.List()
+	return conversationsFor(s.List(), query, unreadOnly)
+}
+func conversationsFor(items []Message, query string, unreadOnly bool) []Conversation {
 	groups := map[string][]Message{}
 	for _, m := range items {
 		id := conversationID(m.Sender)
@@ -107,8 +112,11 @@ func (s *Inbox) Conversations(query string, unreadOnly bool) []Conversation {
 }
 
 func (s *Inbox) Conversation(id string) (ConversationDetail, error) {
+	return conversationFor(s.List(), id)
+}
+func conversationFor(messages []Message, id string) (ConversationDetail, error) {
 	items := []Message{}
-	for _, m := range s.List() {
+	for _, m := range messages {
 		if conversationID(m.Sender) == id {
 			items = append(items, m)
 		}
