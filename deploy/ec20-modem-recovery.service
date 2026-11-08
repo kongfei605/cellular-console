@@ -1,0 +1,42 @@
+[Unit]
+Description=Guarded EC20 missing-modem automatic recovery
+After=ec20-failover.service ModemManager.service
+Wants=ec20-failover.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/libexec/ec20-modem-recovery.py
+ExecStopPost=/usr/bin/python3 /usr/local/libexec/ec20-modem-recovery.py --restore-owned-mm
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=25
+RuntimeDirectory=ec20-modem-recovery
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+StateDirectory=ec20-modem-recovery
+StateDirectoryMode=0700
+UMask=0077
+User=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=CAP_NET_RAW
+RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
+DevicePolicy=closed
+DeviceAllow=char-ttyUSB rw
+ReadWritePaths=/run/systemd/system
+MemoryMax=128M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

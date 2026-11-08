@@ -182,3 +182,6 @@ v1.6.0 短信转发：按发件标识、内容关键词匹配（任一/全部）
 使用和限制见 SMS_FORWARDING.txt；周一 GNSS/UAC 现场联调见 MONDAY_ONSITE_CHECKLIST.txt。
 
 v1.6.1：Webhook 支持多组自定义 Header，兼容旧 Bearer；转发方式通过＋按需添加，支持移除、组合。
+
+主机运维：新增独立 EC20 缺失模块恢复守护，先扫描/重新识别，再在有线健康及限频允许时AT软重启。
+保护条件、持久额度、人工暂停和恢复验证见 MODEM_RECOVERY.txt；不更改原主备或 Web 控制台版本。

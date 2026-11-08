@@ -29,6 +29,8 @@
     默认路由、服务版本、USB 完整配置元组；不要硬套之前的 IP、PID 或 tty 编号。
 [ ] 备份主备/NetworkManager 配置、服务单元、EC20 原 USB 元组和本次维护记录；权限 root-only。
 [ ] 关闭短信自动转发；确认没有短信发送、通话、浏览器音频会话及其他模块配置作业。
+[ ] sudo systemctl stop ec20-modem-recovery，暂停新增缺失模块自动恢复守护，避免与人工UAC维护竞争。
+    主备控制器 ec20-failover 继续运行。维护结束且网络恢复后再启动恢复守护。
 [ ] 主备控制器继续运行，保留 EC20 缺席时暂停重拨、插回后恢复、VPN 重连和有线回切策略。
     不清空路由、不改 APN/DNS、不停 NetworkManager/主备/VPN 来“让测试通过”。
 

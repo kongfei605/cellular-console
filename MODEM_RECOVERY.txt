@@ -1,0 +1,81 @@
+EC20 USB 存在但 ModemManager 丢失模块 — 自动恢复
+================================================
+
+2026-11-08 故障记录
+- 04:14:16：pppd 报 Modem hangup，PPP 断开；NetworkManager 随后尝试自动重拨。
+- 04:14:24 起：主 AT 口 ttyUSB2 连续超时；04:14:49 达到10次，MM 将模块标为 invalid。
+- USB 设备与串口仍存在，MM 列表为空。保留的内核日志没有对应 USB 拔插或电源告警。
+- 09:12：受控暂停 MM 后，次 AT 口可响应，AT+CFUN=1,1 返回 OK；USB 重新枚举。
+  09:12:40 起 PPP 恢复；绑定 ppp0 的 HTTPS 返回200，有线和3条VPN保持正常。
+- 这些证据确认故障链和恢复手段，不能确定根因属于固件、供电、硬件或运营商链路。
+  未采集事发时模块诊断口/供电波形，不能把“重启能恢复”当成固件卡死的证明。
+
+部署边界
+- 独立 root systemd 服务 ec20-modem-recovery，不修改原 ec20-failover、路由、APN、DNS、
+  VPN、NetworkManager、主控制台、GNSS 或 UAC 配置。正常连接时只读观察，不打开 AT 口。
+- 这是主机运维守护脚本，使用系统 Python 标准库；Go Web 控制台及版本保持不变。
+- 配置 /etc/ec20-modem-recovery.json，程序 /usr/local/libexec/ec20-modem-recovery.py。
+- 限制为当前已核验 EC20F 固件、USB 物理口1-2、VID/PID 2c7c:0125 和设备标识。
+  更换硬件/USB口后应重新核验；不会为了恢复而任意选择一个 USB 串口。
+
+触发条件（连续90秒同时满足）
+- 主备状态更新时间小于15秒，有线主用、有线链路/IP正常，3条VPN健康。
+- 目标 EC20 USB 持续存在、已授权且枚举编号不变。
+- ModemManager 正常运行且没有被屏蔽；可成功读取其列表，但找不到目标模块，且没有其他模块。
+- PPP 接口与 pppd 进程均不存在，蜂窝健康为 false，没有进行中的短信提交。
+- 没有人工暂停标记，也没有 UAC 查询维护标记。
+- 每次动作前独立绑定有线和VPN接口 ping，重新确认主备进程、NetworkManager进程和有线IP不变。
+- USB 拔掉时暂停；蜂窝主用时暂停；MM 人工停服/屏蔽、API读取失败或人工维护时暂停。
+  模块已经识别但注册/拨号不成功，交回现有主备机制，不据此强制重启。
+
+恢复顺序
+1. 保存私有诊断日志，持久化占用本轮额度；请求 mmcli --scan-modems，观察约30秒。
+2. 若仍然符合“目标模块缺失”，重启 ModemManager 重新识别，观察约75秒。
+   不重启 NetworkManager、主备、VPN 或69主机；仅允许本机只有这只目标蜂窝模块时执行。
+3. 若仍缺失且满足重启额度，通过次 AT 接口03尝试模块重启：
+   布防独立90秒MM恢复任务 → runtime mask/暂停MM → 检查串口无占用并独占打开 →
+   AT、CGMR核实固件 → 再检查有线/VPN → AT+CFUN=1,1 → 恢复MM。
+   主服务退出时 ExecStopPost 也会恢复自己持有的MM维护状态。
+4. 等待约120秒自动拨号恢复。OK 不代表恢复成功，须满足：
+   目标设备正确、MM状态connected、真实ppp0及地址匹配、蜂窝探测健康、3VPN及有线保持正常，
+   连续至少20秒，且绑定ppp0的HTTPS请求返回200，才记录成功。
+   在观察窗口末端刚恢复时，允许完成该20秒连续验证。
+5. 过程中有线/VPN恶化、USB变化、目标重新出现、PPP开始建立或人工暂停，立即停止后续升级动作。
+   如已持有MM维护状态，仍优先恢复MM；不会继续发送模块重启命令。
+
+限频和停止边界
+- 一轮恢复至少间隔15分钟，每小时最多3轮、滚动24小时最多6轮。
+- EC20重启尝试至少间隔6小时、滚动24小时最多2次；AT无响应也会占用尝试额度。
+- 连续3轮失败熔断1小时；成功不清空时间窗口额度。
+- 额度文件 /var/lib/ec20-modem-recovery/ledger.json，0600、原子替换与fsync；重启服务不清额度。
+  文件损坏/写入失败时停止新动作，不自动删除重建；系统时钟回退时也暂停。
+- AT完全不响应或固件不符时，记录失败并等待现场处理；不自动USB解绑、改USB组合或切整机电源。
+- 只有AT软重启能力，不能保证恢复断电、USB/供电硬故障或坏端口组合。届时需要现场断电重插。
+- 有线在重启进行中同时失效属于双重故障，不能保证已有SSH/TCP会话不断；本策略通过前置保护、
+  每步复核、避免改有线/VPN和限频降低风险，不能替代独立现场管理通道。
+- 模块重启可能清除GNSS开启状态和即时音频路由；不擅自重启定位/音频/呼叫。恢复网络后另行核验。
+
+人工维护与观察
+sudo systemctl stop ec20-modem-recovery
+或 sudo touch /run/ec20-modem-recovery/paused（暂停后不会启动新的动作；已开始重启无法撤回）。
+维护结束，移除暂停标记，再启动服务；重新累计90秒，不会立即重启模块。
+执行现场UAC/天线/手工MM inhibit/重启之前应停此服务，避免自动恢复与人工操作竞争。
+
+只读检查：sudo python3 /usr/local/libexec/ec20-modem-recovery.py --check
+公开摘要：/run/ec20-modem-recovery/status.json（不含短信、IMEI/IMSI、凭据或坐标）
+事件日志：sudo journalctl -u ec20-modem-recovery --since today
+私有事前快照：/var/lib/ec20-modem-recovery/incident-*/（root-only）
+临时MM维护标记：/run/ec20-modem-recovery/owner.json，仅恢复自己创建的runtime mask。
+永久mask或别人的人工mask不在恢复范围内；不执行 systemctl unmask 的永久模式。
+
+验证策略
+- 单元模拟覆盖各级恢复、保护条件变坏、USB插拔、正常等待/人工维护不干预、持久限频、
+  熔断、时间回退、存储错误、AT固定命令、伪终端收发、MM兜底及无法验证时不报成功。
+- 部署时布防10分钟独立回滚，只停用新增服务并恢复它持有的MM维护状态。
+- 现场运行验收：有线/VPN稳定时，临时 inhibit 目标模块，模拟USB仍在但MM缺失；
+  inhibit由独立systemd任务限时释放，原主备守护始终运行。验证90秒观察和重新识别后PPP恢复。
+- 此类测试不伪造固件AT卡死，也不为验证第二级而重复重启健康EC20。
+  真正AT软重启已在09:12维护中实测，自动升级路径用模拟及伪终端验证；两者不可混称。
+
+厂商重启命令说明
+https://forums.quectel.com/t/how-to-reset-ec20-module/2902

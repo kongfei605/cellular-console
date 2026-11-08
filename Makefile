@@ -4,7 +4,7 @@ GO ?= go
 
 test:
 	$(GO) test -race ./...
-	python3 -m unittest discover -s deploy -p 'test_check_uac.py'
+	python3 -m unittest discover -s deploy -p 'test_*.py'
 
 build:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags='-s -w' -o bin/ec20-console-linux-amd64 .
