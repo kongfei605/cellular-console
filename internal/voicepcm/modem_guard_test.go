@@ -2,10 +2,39 @@ package voicepcm
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/godbus/dbus/v5"
 	"testing"
 	"time"
 )
+
+func TestGuardHydratesCallsAbsentFromObjectManager(t *testing.T) {
+	current := dbus.ObjectPath("/org/freedesktop/ModemManager1/Call/1")
+	ended := dbus.ObjectPath("/org/freedesktop/ModemManager1/Call/0")
+	all := managedObjects{"/org/freedesktop/ModemManager1/Modem/0": {modemIF: {"DeviceIdentifier": dbus.MakeVariant("selected")}, voiceIF: {"Calls": dbus.MakeVariant([]dbus.ObjectPath{current, ended})}}}
+	states := map[dbus.ObjectPath]int32{current: 4, ended: 7}
+	read := func(p dbus.ObjectPath) (map[string]dbus.Variant, error) {
+		return map[string]dbus.Variant{"State": dbus.MakeVariant(states[p])}, nil
+	}
+	if e := hydrateCalls(all, "selected", read); e != nil {
+		t.Fatal(e)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	f, _ := json.Marshal(map[string]any{"updated": now.Format(time.RFC3339), "active": "wired", "wired_healthy": true, "cellular_healthy": true, "cellular_present": true, "vpns": map[string]bool{"tun0": true, "tun1": true, "tun2": true}})
+	if _, e := readState(all, all[current][callIF], f, "selected", current, now); e != nil {
+		t.Fatal(e)
+	}
+	states[ended] = 4
+	if e := hydrateCalls(all, "selected", read); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := readState(all, all[current][callIF], f, "selected", current, now); e == nil {
+		t.Fatal("other active call accepted")
+	}
+	if e := hydrateCalls(all, "selected", func(dbus.ObjectPath) (map[string]dbus.Variant, error) { return nil, errors.New("removed") }); e == nil {
+		t.Fatal("removed call accepted")
+	}
+}
 
 func TestReadOnlyModemGuardPinsCallOwnershipAndFreshFailover(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)

@@ -27,20 +27,41 @@ func (m *Modem) Read(ctx context.Context) (Snapshot, error) {
 	if e := m.Conn.Object(s.Owner, "/org/freedesktop/ModemManager1").CallWithContext(ctx, "org.freedesktop.DBus.ObjectManager.GetManagedObjects", dbus.FlagNoAutoStart).Store(&all); e != nil {
 		return s, e
 	}
+	return snapshot(all, m.DeviceID, s.Owner, func(path dbus.ObjectPath) (map[string]dbus.Variant, error) {
+		var p map[string]dbus.Variant
+		e := m.Conn.Object(s.Owner, path).CallWithContext(ctx, "org.freedesktop.DBus.Properties.GetAll", dbus.FlagNoAutoStart, destination+".Call").Store(&p)
+		return p, e
+	})
+}
+
+// Calls are referenced by the modem, but MM need not export them through its
+// ObjectManager. Read their properties from the same unique bus owner.
+func snapshot(all objects, deviceID, owner string, readCall func(dbus.ObjectPath) (map[string]dbus.Variant, error)) (Snapshot, error) {
+	s := Snapshot{Owner: owner, Calls: map[string]int32{}}
 	found := 0
 	for _, ifaces := range all {
 		p := ifaces[modemIF]
-		if stringValue(p, "DeviceIdentifier") != m.DeviceID {
+		if stringValue(p, "DeviceIdentifier") != deviceID {
 			continue
 		}
 		found++
-		s.DeviceID = m.DeviceID
+		s.DeviceID = deviceID
 		s.Model = stringValue(p, "Model")
 		s.Firmware = stringValue(p, "Revision")
 		s.Primary = stringValue(p, "PrimaryPort")
-		paths, _ := ifaces[modemIF+".Voice"]["Calls"].Value().([]dbus.ObjectPath)
+		paths, ok := ifaces[modemIF+".Voice"]["Calls"].Value().([]dbus.ObjectPath)
+		if !ok {
+			return s, errors.New("call list unavailable")
+		}
 		for _, path := range paths {
-			code, ok := all[path][destination+".Call"]["State"].Value().(int32)
+			if !CallPath.MatchString(string(path)) {
+				return s, errors.New("invalid call path")
+			}
+			properties, err := readCall(path)
+			if err != nil {
+				return s, err
+			}
+			code, ok := properties["State"].Value().(int32)
 			if !ok {
 				return s, errors.New("call state unavailable")
 			}

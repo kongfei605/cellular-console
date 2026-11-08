@@ -62,6 +62,13 @@ func (g *SystemGuard) Check(parent context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err = hydrateCalls(objects, g.modemID, func(path dbus.ObjectPath) (map[string]dbus.Variant, error) {
+		var p map[string]dbus.Variant
+		e := g.conn.Object(g.owner, path).CallWithContext(ctx, "org.freedesktop.DBus.Properties.GetAll", dbus.FlagNoAutoStart, callIF).Store(&p)
+		return p, e
+	}); err != nil {
+		return err
+	}
 	var call map[string]dbus.Variant
 	err = g.conn.Object(g.owner, g.call).CallWithContext(ctx, "org.freedesktop.DBus.Properties.GetAll", dbus.FlagNoAutoStart, callIF).Store(&call)
 	if err != nil {
@@ -76,6 +83,36 @@ func (g *SystemGuard) Check(parent context.Context) error {
 		return err
 	}
 	return CheckState(state, g.modemID, string(g.call), time.Now().UTC())
+}
+
+func hydrateCalls(objects managedObjects, modemID string, readCall func(dbus.ObjectPath) (map[string]dbus.Variant, error)) error {
+	for _, ifaces := range objects {
+		id, _ := ifaces[modemIF]["DeviceIdentifier"].Value().(string)
+		if id != modemID {
+			continue
+		}
+		paths, ok := ifaces[voiceIF]["Calls"].Value().([]dbus.ObjectPath)
+		if !ok {
+			return errors.New("call list unavailable")
+		}
+		for _, path := range paths {
+			if !callPathPattern.MatchString(string(path)) {
+				return errors.New("invalid call path")
+			}
+			p, e := readCall(path)
+			if e != nil {
+				return e
+			}
+			if _, ok := p["State"].Value().(int32); !ok {
+				return errors.New("call state unavailable")
+			}
+			if objects[path] == nil {
+				objects[path] = map[string]map[string]dbus.Variant{}
+			}
+			objects[path][callIF] = p
+		}
+	}
+	return nil
 }
 
 func readState(objects managedObjects, call map[string]dbus.Variant, failover []byte, modemID string, callPath dbus.ObjectPath, observed time.Time) (State, error) {
