@@ -34,7 +34,7 @@ type SystemGuard struct {
 
 func NewSystemGuard(ctx context.Context, modemID, callPath, failoverFile string, vpnInterfaces ...string) (*SystemGuard, error) {
 	if len(vpnInterfaces) == 0 {
-		vpnInterfaces = []string{"tun0", "tun1", "tun2"}
+		return nil, errors.New("explicit required VPN set required")
 	}
 	if modemID == "" || !callPathPattern.MatchString(callPath) || failoverFile == "" {
 		return nil, errors.New("pinned modem, full call path and failover file required")
@@ -169,15 +169,17 @@ func readState(objects managedObjects, call map[string]dbus.Variant, failover []
 
 func vpnsHealthy(actual map[string]bool, expected []string) bool {
 	if len(expected) == 0 {
-		expected = []string{"tun0", "tun1", "tun2"}
+		return false
 	}
 	if len(actual) != len(expected) {
 		return false
 	}
+	seen := map[string]bool{}
 	for _, name := range expected {
-		if !actual[name] {
+		if seen[name] || !actual[name] {
 			return false
 		}
+		seen[name] = true
 	}
 	return true
 }

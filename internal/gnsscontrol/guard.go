@@ -18,26 +18,17 @@ type NetworkGuard struct {
 	VPNInterfaces          []string
 }
 
-func (g NetworkGuard) cell() string {
-	if g.CellInterface != "" {
-		return g.CellInterface
+func (g NetworkGuard) configured() error {
+	if g.CellInterface == "" || g.USBPath == "" || len(g.VPNInterfaces) == 0 {
+		return errors.New("explicit cellular, USB and VPN guard configuration required")
 	}
-	return "ppp0"
-}
-func (g NetworkGuard) usb() string {
-	if g.USBPath != "" {
-		return g.USBPath
-	}
-	return "1-2"
-}
-func (g NetworkGuard) vpns() []string {
-	if len(g.VPNInterfaces) > 0 {
-		return g.VPNInterfaces
-	}
-	return []string{"tun0", "tun1", "tun2"}
+	return nil
 }
 
 func (g NetworkGuard) Check() error {
+	if e := g.configured(); e != nil {
+		return e
+	}
 	var f struct {
 		Updated, Active, CellularIP string
 		WiredHealthy                bool `json:"wired_healthy"`
@@ -58,15 +49,15 @@ func (g NetworkGuard) Check() error {
 	_ = json.Unmarshal(fields["cellular_ip"], &f.CellularIP)
 	t, e := time.Parse("2006-01-02T15:04:05-0700", f.Updated)
 	age := time.Since(t)
-	if e != nil || age > 30*time.Second || age < -time.Second || f.Active != "wired" || !f.WiredHealthy || !f.CellularPresent || !f.CellularHealthy || f.CellularIP == "" || len(f.VPNs) != len(g.vpns()) {
+	if e != nil || age > 30*time.Second || age < -time.Second || f.Active != "wired" || !f.WiredHealthy || !f.CellularPresent || !f.CellularHealthy || f.CellularIP == "" || len(f.VPNs) != len(g.VPNInterfaces) {
 		return errors.New("network guard")
 	}
-	for _, name := range g.vpns() {
+	for _, name := range g.VPNInterfaces {
 		if !f.VPNs[name] {
 			return errors.New("VPN guard")
 		}
 	}
-	iface, e := net.InterfaceByName(g.cell())
+	iface, e := net.InterfaceByName(g.CellInterface)
 	if e != nil {
 		return e
 	}
@@ -83,22 +74,25 @@ func (g NetworkGuard) Check() error {
 	if !found {
 		return errors.New("PPP address guard")
 	}
-	if _, e := os.ReadFile(filepath.Join("/sys/bus/usb/devices", g.usb(), "devnum")); e != nil {
+	if _, e := os.ReadFile(filepath.Join("/sys/bus/usb/devices", g.USBPath, "devnum")); e != nil {
 		return e
 	}
 	return nil
 }
 func (g NetworkGuard) Signature() (string, error) {
+	if e := g.configured(); e != nil {
+		return "", e
+	}
 	// Includes PPP identity, address, USB enumeration and running PPP process IDs.
 	parts := []string{}
-	for _, p := range []string{filepath.Join("/sys/class/net", g.cell(), "ifindex"), filepath.Join("/sys/bus/usb/devices", g.usb(), "devnum")} {
+	for _, p := range []string{filepath.Join("/sys/class/net", g.CellInterface, "ifindex"), filepath.Join("/sys/bus/usb/devices", g.USBPath, "devnum")} {
 		b, e := os.ReadFile(p)
 		if e != nil && !os.IsNotExist(e) {
 			return "", e
 		}
 		parts = append(parts, p+"="+string(b))
 	}
-	if iface, e := net.InterfaceByName(g.cell()); e == nil {
+	if iface, e := net.InterfaceByName(g.CellInterface); e == nil {
 		a, e := iface.Addrs()
 		if e != nil {
 			return "", e

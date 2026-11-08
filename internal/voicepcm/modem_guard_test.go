@@ -9,6 +9,9 @@ import (
 )
 
 func TestConfiguredVPNSetCannotBeReplacedByDifferentHealthyTunnels(t *testing.T) {
+	if vpnsHealthy(map[string]bool{}, nil) || vpnsHealthy(map[string]bool{"wg0": true, "other": true}, []string{"wg0", "wg0"}) {
+		t.Fatal("empty or duplicate required VPN set accepted")
+	}
 	if !vpnsHealthy(map[string]bool{"wg0": true, "tun7": true}, []string{"wg0", "tun7"}) {
 		t.Fatal("configured VPNs rejected")
 	}
@@ -32,14 +35,14 @@ func TestGuardHydratesCallsAbsentFromObjectManager(t *testing.T) {
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	f, _ := json.Marshal(map[string]any{"updated": now.Format(time.RFC3339), "active": "wired", "wired_healthy": true, "cellular_healthy": true, "cellular_present": true, "vpns": map[string]bool{"tun0": true, "tun1": true, "tun2": true}})
-	if _, e := readState(all, all[current][callIF], f, "selected", current, now); e != nil {
+	if _, e := readState(all, all[current][callIF], f, "selected", current, now, "tun0", "tun1", "tun2"); e != nil {
 		t.Fatal(e)
 	}
 	states[ended] = 4
 	if e := hydrateCalls(all, "selected", read); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := readState(all, all[current][callIF], f, "selected", current, now); e == nil {
+	if _, e := readState(all, all[current][callIF], f, "selected", current, now, "tun0", "tun1", "tun2"); e == nil {
 		t.Fatal("other active call accepted")
 	}
 	if e := hydrateCalls(all, "selected", func(dbus.ObjectPath) (map[string]dbus.Variant, error) { return nil, errors.New("removed") }); e == nil {
@@ -54,25 +57,25 @@ func TestReadOnlyModemGuardPinsCallOwnershipAndFreshFailover(t *testing.T) {
 		modemIF: {"DeviceIdentifier": dbus.MakeVariant("selected")}, voiceIF: {"Calls": dbus.MakeVariant([]dbus.ObjectPath{path})}}}
 	call := map[string]dbus.Variant{"State": dbus.MakeVariant(int32(4))}
 	f, _ := json.Marshal(map[string]any{"updated": now.Format("2006-01-02T15:04:05-0700"), "active": "wired", "wired_healthy": true, "cellular_healthy": true, "cellular_present": true, "vpns": map[string]bool{"tun0": true, "tun1": true, "tun2": true}})
-	s, err := readState(objects, call, f, "selected", path, now)
+	s, err := readState(objects, call, f, "selected", path, now, "tun0", "tun1", "tun2")
 	if err != nil || CheckState(s, "selected", string(path), now) != nil {
 		t.Fatalf("valid guard failed: %v %+v", err, s)
 	}
-	if _, err = readState(objects, call, f, "other", path, now); err == nil {
+	if _, err = readState(objects, call, f, "other", path, now, "tun0", "tun1", "tun2"); err == nil {
 		t.Fatal("other modem accepted")
 	}
-	if _, err = readState(objects, call, f, "selected", "/org/freedesktop/ModemManager1/Call/99", now); err == nil {
+	if _, err = readState(objects, call, f, "selected", "/org/freedesktop/ModemManager1/Call/99", now, "tun0", "tun1", "tun2"); err == nil {
 		t.Fatal("other call accepted")
 	}
 	call["State"] = dbus.MakeVariant(int32(7))
-	s, err = readState(objects, call, f, "selected", path, now)
+	s, err = readState(objects, call, f, "selected", path, now, "tun0", "tun1", "tun2")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if CheckState(s, "selected", string(path), now) == nil {
 		t.Fatal("ended call accepted")
 	}
-	if _, err = readState(objects, call, []byte(`{"updated":"not-a-time"}`), "selected", path, now); err == nil {
+	if _, err = readState(objects, call, []byte(`{"updated":"not-a-time"}`), "selected", path, now, "tun0", "tun1", "tun2"); err == nil {
 		t.Fatal("invalid failover accepted")
 	}
 }
