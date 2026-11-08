@@ -17,7 +17,12 @@ type LiveVoice struct {
 	DeviceID, USBPath, FailoverFile string
 }
 
-func (v LiveVoice) Ready() error { _, e := voicepcm.Discover("/sys", "/proc", v.USBPath); return e }
+func (v LiveVoice) Ready() error {
+	if _, e := voicepcm.Discover("/sys", "/proc", v.USBPath); e != nil {
+		return e
+	}
+	return voicecontrol.Ready()
+}
 func (v LiveVoice) Prepare(ctx context.Context, call string) (voicepcm.Factory, func(), error) {
 	if !voicecontrol.CallPath.MatchString(call) {
 		return nil, nil, errors.New("完整呼叫标识无效")
