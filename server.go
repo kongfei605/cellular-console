@@ -26,7 +26,7 @@ import (
 //go:embed web/*
 var assets embed.FS
 
-const version = "1.6.1"
+const version = "1.7.0"
 
 type credentials struct {
 	Username string `json:"username"`
@@ -42,6 +42,7 @@ type loginLimit struct {
 }
 
 type App struct {
+	voicePrepare        func(context.Context, string, string) error
 	forwarding          *ForwardStore
 	webhookClient       *http.Client
 	locationObservation locationObserver
@@ -463,8 +464,20 @@ func (a *App) voiceAction(w http.ResponseWriter, r *http.Request) {
 			apiError(w, 400, ne.Error())
 			return
 		}
+		if a.voicePrepare != nil {
+			if e := a.voicePrepare(ctx, "dial", ""); e != nil {
+				apiError(w, 409, "USB语音准备未通过："+e.Error())
+				return
+			}
+		}
 		id, err = a.backend.Dial(ctx, n)
 	} else {
+		if action == "accept" && a.voicePrepare != nil {
+			if e := a.voicePrepare(ctx, "accept", "/org/freedesktop/ModemManager1/Call/"+id); e != nil {
+				apiError(w, 409, "USB语音准备未通过："+e.Error())
+				return
+			}
+		}
 		err = a.backend.Act(ctx, id, action)
 	}
 	if err != nil {

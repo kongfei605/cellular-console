@@ -159,6 +159,10 @@ class LinuxOps:
                 if Path('/sys/class/net/ppp0').exists(): raise
                 s['ppp'] = False  # Normal link removal between exists() and ip(8).
         s['paused'] = (RUNTIME/'paused').exists() or Path('/run/ec20-uac-query/state.json').exists()
+        voice_owner=Path('/run/ec20-voice-route/owner.json')
+        if voice_owner.exists():
+            voice=json.loads(voice_owner.read_text())
+            if voice.get('owned') and 0<=time.time()-voice.get('created',0)<150: s['paused']=True
         s['mm_active'] = command(['systemctl', 'show', MM, '-p', 'ActiveState', '--value']) == 'active'
         s['mm_masked'] = 'masked' in command(['systemctl', 'show', MM, '-p', 'UnitFileState', '--value'])
         outbox = Path('/var/lib/ec20-console/outbox.json')

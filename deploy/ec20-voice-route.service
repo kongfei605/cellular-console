@@ -1,0 +1,32 @@
+[Unit]
+Description=Prepare EC20 USB voice once per hardware generation
+After=ModemManager.service ec20-failover.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/ec20-voice-route.py
+ExecStopPost=/usr/bin/python3 /usr/local/libexec/ec20-voice-route.py --restore
+RuntimeMaxSec=60
+TimeoutStopSec=15
+RuntimeDirectory=ec20-voice-route
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+StateDirectory=ec20-voice-route
+StateDirectoryMode=0700
+User=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=CAP_NET_RAW CAP_DAC_READ_SEARCH
+RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
+DevicePolicy=closed
+DeviceAllow=char-ttyUSB rw
+MemoryMax=96M
+TasksMax=32
+UMask=0077

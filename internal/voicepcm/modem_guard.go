@@ -50,7 +50,8 @@ func NewSystemGuard(ctx context.Context, modemID, callPath, failoverFile string)
 	return &SystemGuard{conn: conn, owner: owner, modemID: modemID, call: dbus.ObjectPath(callPath), failoverFile: failoverFile}, nil
 }
 
-func (g *SystemGuard) Close() error { g.mu.Lock(); defer g.mu.Unlock(); return g.conn.Close() }
+func (g *SystemGuard) Close() error  { g.mu.Lock(); defer g.mu.Unlock(); return g.conn.Close() }
+func (g *SystemGuard) Owner() string { return g.owner }
 func (g *SystemGuard) Check(parent context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -109,6 +110,11 @@ func readState(objects managedObjects, call map[string]dbus.Variant, failover []
 		for _, p := range calls {
 			if p == callPath {
 				belongs = true
+			} else {
+				other, _ := objects[p][callIF]["State"].Value().(int32)
+				if other != 7 {
+					return out, errors.New("another call exists")
+				}
 			}
 		}
 	}

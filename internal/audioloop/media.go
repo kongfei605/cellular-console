@@ -1,4 +1,4 @@
-// Package audioloop implements a hardware-independent, authenticated WebRTC echo.
+// Package audioloop implements authenticated software echo and explicitly guarded EC20 UAC media.
 package audioloop
 
 import (
@@ -35,6 +35,10 @@ type Media struct {
 }
 
 type Peer struct {
+	Mode       string
+	Call       string
+	factory    voicepcm.Factory
+	cleanup    func()
 	ID         string
 	Owner      string
 	PC         *webrtc.PeerConnection
@@ -53,21 +57,25 @@ type Peer struct {
 }
 
 type MediaStats struct {
-	Active    bool      `json:"active"`
-	Owned     bool      `json:"owned"`
-	ID        string    `json:"id,omitempty"`
-	State     string    `json:"state,omitempty"`
-	Received  uint64    `json:"received"`
-	Reflected uint64    `json:"reflected"`
-	Expires   time.Time `json:"expires,omitempty"`
+	VoiceReady  bool      `json:"voice_ready"`
+	VoiceReason string    `json:"voice_reason,omitempty"`
+	Mode        string    `json:"mode,omitempty"`
+	Call        string    `json:"call,omitempty"`
+	Active      bool      `json:"active"`
+	Owned       bool      `json:"owned"`
+	ID          string    `json:"id,omitempty"`
+	State       string    `json:"state,omitempty"`
+	Received    uint64    `json:"received"`
+	Reflected   uint64    `json:"reflected"`
+	Expires     time.Time `json:"expires,omitempty"`
 }
 
 func NewMedia(bind string) (*Media, error) {
 	return newMedia(bind, nil)
 }
 
-// NewMediaWithPCM is a staged library entry point, deliberately absent from the
-// deployed CLI/UI. Production use must supply a guarded EC20-only PCM factory.
+// NewMediaWithPCM is a library entry point. Production call offers supply a
+// per-peer EC20-only guarded factory and call identity instead of a global factory.
 // All ordinary callers continue to use NewMedia's hardware-free RTP echo.
 func NewMediaWithPCM(bind string, factory voicepcm.Factory) (*Media, error) {
 	if factory == nil {
@@ -126,6 +134,10 @@ func validateOffer(offer webrtc.SessionDescription) error {
 }
 
 func (m *Media) Offer(ctx context.Context, owner string, expires time.Time, offer webrtc.SessionDescription) (string, webrtc.SessionDescription, error) {
+	return m.offer(ctx, owner, expires, offer, "software-loopback", "", m.pcmFactory, nil)
+}
+
+func (m *Media) offer(ctx context.Context, owner string, expires time.Time, offer webrtc.SessionDescription, mode, call string, factory voicepcm.Factory, cleanup func()) (string, webrtc.SessionDescription, error) {
 	if err := validateOffer(offer); err != nil {
 		return "", webrtc.SessionDescription{}, err
 	}
@@ -143,7 +155,7 @@ func (m *Media) Offer(ctx context.Context, owner string, expires time.Time, offe
 		m.mu.Unlock()
 		return "", webrtc.SessionDescription{}, err
 	}
-	p := &Peer{ID: token(), Owner: owner, PC: pc, Created: time.Now(), Expires: expires}
+	p := &Peer{ID: token(), Owner: owner, PC: pc, Created: time.Now(), Expires: expires, Mode: mode, Call: call, factory: factory, cleanup: cleanup}
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	if max := p.Created.Add(3 * time.Minute); p.Expires.After(max) {
 		p.Expires = max
@@ -173,7 +185,7 @@ func (m *Media) Offer(ctx context.Context, owner string, expires time.Time, offe
 		}
 	}()
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		if s == webrtc.PeerConnectionStateConnected && m.pcmFactory != nil {
+		if s == webrtc.PeerConnectionStateConnected && p.factory != nil {
 			p.startPCM.Do(func() { go m.runPCM(p, track) })
 		}
 		if s == webrtc.PeerConnectionStateFailed || s == webrtc.PeerConnectionStateClosed {
@@ -195,7 +207,7 @@ func (m *Media) Offer(ctx context.Context, owner string, expires time.Time, offe
 			if len(packet.Payload) == 0 || len(packet.Payload) > 1600 {
 				continue
 			}
-			if m.pcmFactory != nil {
+			if p.factory != nil {
 				p.jitter.Push(packet.Timestamp, packet.Payload)
 				continue
 			}
@@ -242,6 +254,9 @@ func (m *Media) stop(p *Peer) {
 		if pcm != nil {
 			pcm.Close()
 		}
+		if p.cleanup != nil {
+			p.cleanup()
+		}
 		p.PC.Close()
 		m.mu.Lock()
 		if m.active == p {
@@ -252,7 +267,7 @@ func (m *Media) stop(p *Peer) {
 }
 
 func (m *Media) runPCM(p *Peer, track *webrtc.TrackLocalStaticRTP) {
-	stream, err := m.pcmFactory(p.ctx)
+	stream, err := p.factory(p.ctx)
 	if err != nil || stream == nil {
 		m.stop(p)
 		return
@@ -378,7 +393,7 @@ func (m *Media) Stats(owner string) MediaStats {
 	if p.Owner != owner {
 		return MediaStats{Active: true}
 	}
-	return MediaStats{Active: true, Owned: true, ID: p.ID, State: p.PC.ConnectionState().String(), Received: p.Received.Load(), Reflected: p.Reflected.Load(), Expires: p.Expires}
+	return MediaStats{Mode: p.Mode, Call: p.Call, Active: true, Owned: true, ID: p.ID, State: p.PC.ConnectionState().String(), Received: p.Received.Load(), Reflected: p.Reflected.Load(), Expires: p.Expires}
 }
 
 func (m *Media) Sweep(now time.Time) {

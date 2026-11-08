@@ -16,13 +16,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kongfei605/ec20-toolbox/internal/voicepcm"
 	"github.com/pion/webrtc/v4"
 )
 
 //go:embed web/*
 var assets embed.FS
 
-const Version = "0.2.0"
+const Version = "0.3.0"
 const cookieName = "__Host-ec20_audio_session"
 
 type Credentials struct {
@@ -38,6 +39,7 @@ type attempt struct {
 	Expires time.Time
 }
 type Server struct {
+	Voice      VoiceProvider
 	delegated  bool
 	gatewayKey [32]byte
 	revoked    map[string]time.Time
@@ -163,7 +165,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		jsonResponse(w, 200, map[string]any{"ok": true, "version": Version, "mode": "software-loopback", "hardware_access": false})
+		jsonResponse(w, 200, map[string]any{"ok": true, "version": Version, "mode": "software-loopback", "hardware_access": s.Voice != nil})
 	})
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("GET /api/session", s.protect(func(w http.ResponseWriter, r *http.Request, id string, v session) {
@@ -178,17 +180,82 @@ func (s *Server) Handler() http.Handler {
 		jsonResponse(w, 200, map[string]bool{"ok": true})
 	}))
 	mux.HandleFunc("GET /api/loopback", s.protect(func(w http.ResponseWriter, r *http.Request, id string, v session) {
-		jsonResponse(w, 200, s.media.Stats(id))
+		stats := s.media.Stats(id)
+		if s.Voice != nil {
+			e := s.Voice.Ready()
+			stats.VoiceReady = e == nil
+			if e != nil {
+				stats.VoiceReason = "EC20 USB 声卡未就绪"
+			}
+		} else {
+			stats.VoiceReason = "真实通话音频尚未启用"
+		}
+		jsonResponse(w, 200, stats)
 	}))
 	mux.HandleFunc("POST /api/loopback", s.protect(func(w http.ResponseWriter, r *http.Request, id string, v session) {
-		var offer webrtc.SessionDescription
-		if decode(w, r, &offer, 65536) != nil {
+		var input struct {
+			Type webrtc.SDPType `json:"type"`
+			SDP  string         `json:"sdp"`
+			Mode string         `json:"mode"`
+			Call string         `json:"call"`
+		}
+		if decode(w, r, &input, 65536) != nil {
 			failure(w, 400, "音频协商数据无效")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		peer, answer, err := s.media.Offer(ctx, id, v.Expires, offer)
+		offer := webrtc.SessionDescription{Type: input.Type, SDP: input.SDP}
+		if validateOffer(offer) != nil {
+			failure(w, 400, "音频协商数据无效")
+			return
+		}
+		mode := input.Mode
+		if mode == "" {
+			mode = "software-loopback"
+		}
+		if mode != "software-loopback" && mode != "ec20-call" {
+			failure(w, 400, "音频模式无效")
+			return
+		}
+		if s.media.Stats(id).Active {
+			failure(w, 409, ErrBusy.Error())
+			return
+		}
+		var factory voicepcm.Factory
+		var cleanup func()
+		if mode == "ec20-call" {
+			if s.Voice == nil {
+				failure(w, 503, "真实通话音频未启用")
+				return
+			}
+			var e error
+			factory, cleanup, e = s.Voice.Prepare(ctx, input.Call)
+			if e != nil {
+				failure(w, 409, "真实通话或网络保护未通过，无法接入音频")
+				return
+			}
+			if factory == nil || cleanup == nil {
+				failure(w, 503, "真实音频设备未准备完成")
+				if cleanup != nil {
+					cleanup()
+				}
+				return
+			}
+			original := cleanup
+			var once sync.Once
+			cleanup = func() { once.Do(original) }
+		} else if input.Call != "" {
+			failure(w, 400, "软件回环不选择呼叫")
+			return
+		}
+		accepted := false
+		defer func() {
+			if !accepted && cleanup != nil {
+				cleanup()
+			}
+		}()
+		peer, answer, err := s.media.offer(ctx, id, v.Expires, offer, mode, input.Call, factory, cleanup)
 		if errors.Is(err, ErrBusy) {
 			failure(w, 409, err.Error())
 			return
@@ -202,7 +269,8 @@ func (s *Server) Handler() http.Handler {
 			failure(w, 401, "session revoked")
 			return
 		}
-		jsonResponse(w, 200, map[string]any{"id": peer, "answer": answer, "max_seconds": 180})
+		accepted = true
+		jsonResponse(w, 200, map[string]any{"id": peer, "answer": answer, "max_seconds": 180, "mode": mode, "call": input.Call})
 	}))
 	mux.HandleFunc("POST /api/loopback/stop", s.protect(func(w http.ResponseWriter, r *http.Request, id string, v session) {
 		var input struct {

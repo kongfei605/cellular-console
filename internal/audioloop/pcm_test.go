@@ -58,7 +58,7 @@ func TestWebRTCPCMBridgeBothDirectionsAndCallGuard(t *testing.T) {
 		}
 		return nil
 	})
-	m, err := NewMediaWithPCM("127.0.0.1:0", factory)
+	m, err := NewMedia("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,8 @@ func TestWebRTCPCMBridgeBothDirectionsAndCallGuard(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("ICE timeout")
 	}
-	_, answer, err := m.Offer(ctx, "test-browser", time.Now().Add(time.Minute), *pc.LocalDescription())
+	var cleaned atomic.Int32
+	_, answer, err := m.offer(ctx, "test-browser", time.Now().Add(time.Minute), *pc.LocalDescription(), "ec20-call", "/org/freedesktop/ModemManager1/Call/42", factory, func() { cleaned.Add(1) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,5 +174,8 @@ func TestWebRTCPCMBridgeBothDirectionsAndCallGuard(t *testing.T) {
 	}
 	if m.Stats("test-browser").Active {
 		t.Fatal("unsafe peer retained")
+	}
+	if cleaned.Load() != 1 {
+		t.Fatal("per-call guard resources not released exactly once")
 	}
 }

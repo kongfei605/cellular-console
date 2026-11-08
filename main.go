@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/kongfei605/ec20-toolbox/internal/voicecontrol"
 	"log"
 	"net"
 	"net/http"
@@ -32,6 +33,7 @@ func main() {
 	audioBackend := flag.String("audio-backend", "", "fixed loopback audio control URL")
 	gatewayKey := flag.String("audio-gateway-key", "", "private audio gateway credential file")
 	gnssControl := flag.Bool("gnss-control", false, "allow guarded GNSS setup for the locally verified firmware profile")
+	voiceControl := flag.Bool("ec20-voice", false, "prepare guarded USB voice before dial/answer")
 	flag.Parse()
 	if *demo && !strings.HasPrefix(*listen, "127.0.0.1:") {
 		log.Fatal("demo mode must listen on 127.0.0.1")
@@ -56,6 +58,12 @@ func main() {
 	app := newApp(backend, inbox, creds, *failover, *demo)
 	app.network.configPath = *failoverConfig
 	app.locationControl = *gnssControl
+	if *voiceControl && !*demo {
+		app.voicePrepare = func(ctx context.Context, phase, call string) error {
+			_, e := (voicecontrol.Client{}).Prepare(ctx, phase, call)
+			return e
+		}
+	}
 	var tlsPair tls.Certificate
 	if *tlsListen != "" {
 		if *publicOrigin != "https://"+*tlsListen {

@@ -80,7 +80,7 @@ func (s *protectedStream) Close() error {
 	return err
 }
 
-// ALSAFactory is intentionally not wired to a CLI mode or production unit yet.
+// ALSAFactory is available only through the explicitly enabled guarded call mode.
 // Its guard is mandatory and must bind a fresh selected modem + live call and
 // network state; granting all host audio devices is not part of this feature.
 func ALSAFactory(usbPath string, guard Guard) Factory {

@@ -1,0 +1,8 @@
+[Unit]
+Description=Check EC20 USB voice generation without per-call serial takeover
+[Timer]
+OnBootSec=20s
+OnUnitInactiveSec=30s
+AccuracySec=1s
+[Install]
+WantedBy=timers.target

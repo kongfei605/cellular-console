@@ -1,0 +1,55 @@
+EC20 UAC 真实通话音频 — v1.7.0
+==============================
+入口 https://192.0.2.10:8788/#audio，与主控制台共用登录。
+先在通话控制拨号/接听，呼叫接通后，点击“接入当前通话音频”。
+浏览器麦克风 → PCMU WebRTC → 69 Go桥 → EC20 ALSA USB播放 → 蜂窝对端；反方向独立采集。
+软件麦克风回环与440Hz回环保持单独按钮，不会作为真实通话音频的回退路径。
+停止音频不挂断电话，挂断按钮始终独立可用。音频会话最长3分钟，无录音。
+
+与Mac版的区别
+- 同样使用UAC声卡、QPCMV=1,2 USB语音路由和双向音频桥。
+- 69的MM需要两个AT口：主口PPP，次口处理在线管理/短信/通话。因此不保留或抢占MM的次AT口。
+- 在模块维护窗口设置并读回QPCMV=1,2，之后每次拨号/接听只读校验本USB代际的准备凭证。
+  不需要开启MM debug/任意AT接口，不扩大现有polkit权限，不在每次呼叫时停MM。
+- 模块重启/重插后，ec20-voice-route.timer检查本代际凭证。仅有线主用、VPN及蜂窝健康、
+  无呼叫/短信时，协调MM临时inhibit这只模块，独占次AT口设置固定QPCMV路由，再释放交回MM。
+  这会在每个新USB代际最多进行一次短时蜂窝重新连接，不影响有线与VPN配置；失败不循环重试。
+- 若只有蜂窝可用，跳过初始化；数据备用优先。语音未准备时不允许发起新呼叫/接听或接入音频。
+
+保护
+- 仅匹配物理USB 1-2、2c7c:0125、EC20F/EC20CEFAGR08A03M4G、固定DeviceIdentifier。
+- 声卡须是该USB设备自己的S16_LE/8000Hz/mono双向端点，不使用系统默认声卡。
+- 发送端和接收端使用不同PCM数据，测试不以RTP原样回显代替真实通话。
+- 绑定唯一MM服务Owner、本次完整Call路径。挂断、其他呼叫、MM重启、USB代际变化、
+  状态过期、有线故障或蜂窝备用失效，200ms守护检查会关闭音频设备和WebRTC会话。
+- 如通话触发CS回落影响数据备用，应结束测试并优先恢复数据；包计数不等于双向听感通过。
+- 音频用户只有本EC20的control和D0双向PCM节点权限，不加入通用audio或dialout组。
+  Go音频服务不能打开AT口、不写模块配置；准备校验只读D-Bus、sysfs和root凭证。
+
+维护与恢复
+- 初次启用仅将原USB元组最后UAC位0→1；保存完整原始元组，重启EC20使USB重新枚举。
+  VID/PID、诊断、GNSS、AT、modem、数据和ADB位均保留；不改QDAI、APN或RF配置。
+- 升级期间暂停ec20-modem-recovery，原ec20-failover、NetworkManager、VPN持续运行。
+- 独立180秒任务兜底恢复本次持有的MM runtime mask；独立20分钟任务回退USB功能位、
+  应用版本、服务drop-in、udev规则及初始化文件。回退USB组合可能再次重启EC20。
+- 自动回滚只能在USB/AT控制接口可用时恢复组合；坏USB枚举、物理断电等仍可能需要现场处理。
+- 初始化器的inhibit由独立systemd任务限制45秒，退出也会释放；自动恢复服务避让它的维护标记。
+- 凭证 /run/ec20-voice-route/ready.json，root写入、其他用户只读，绑定USB指纹和本机boot ID。
+  MM仅重启且USB未重启时QPCMV路由保持；新USB代际/主机重启自动使凭证失效。
+- 手工修改QPCMV/模块配置前，暂停语音初始化timer和自动恢复服务，清理旧准备凭证；
+  否则无法从只读MM属性发现外部AT对音频路由的修改。
+- 本次模块重启可能关闭GNSS；先验证蜂窝与SSH，再按原状态恢复GNSS。UAC不等于GNSS定位成功。
+
+只读检查
+  /usr/local/libexec/ec20-uac-ready
+  /usr/local/libexec/ec20-uac-ready -voice-route
+  systemctl status ec20-voice-route.timer ec20-modem-recovery
+  journalctl -u ec20-voice-route --since today
+
+备份与回滚（root）
+  /var/lib/ec20-uac-enable-20261108/
+  sudo python3 /var/lib/ec20-uac-enable-20261108/rollback.py --rollback
+回滚保留审核记录和不带登录能力的闲置系统音频账户；不删除短信或联系人。
+
+参考：EC25 Toolbox 27.1的USB音频/每次呼叫QPCMV准备行为；69使用MM协调初始化，未复制其Swift实现。
+https://github.com/skyrocketingHong/EC25Toolbox/blob/27.1/Sources/EC25Toolbox/Features/CallAudio/ModemStore%2BModuleVoiceRuntime.swift

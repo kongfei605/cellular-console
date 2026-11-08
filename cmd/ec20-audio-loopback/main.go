@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/kongfei605/ec20-toolbox/internal/audioloop"
+	"github.com/kongfei605/ec20-toolbox/internal/voicecontrol"
 )
 
 func main() {
@@ -26,6 +27,7 @@ func main() {
 	key := flag.String("key", "/etc/ec20-audio-loopback/server.key", "TLS private key")
 	credsPath := flag.String("credentials", "/etc/ec20-console/credentials.json", "existing administrator credentials")
 	gatewayKey := flag.String("gateway-key", "", "private console gateway key; enables loopback HTTP control only")
+	voice := flag.Bool("ec20-voice", false, "enable guarded EC20 UAC calls using the fixed local voice broker")
 	flag.Parse()
 
 	var creds audioloop.Credentials
@@ -89,6 +91,9 @@ func main() {
 		if e != nil {
 			log.Fatal(e)
 		}
+		if *voice {
+			app.Voice = audioloop.LiveVoice{Control: voicecontrol.Client{}, DeviceID: "0000000000000000000000000000000000000000", USBPath: "1-2", FailoverFile: "/run/ec20-failover/status.json"}
+		}
 		handler = app.GatewayHandler()
 	} else {
 		handler = audioloop.NewServer(media, *origin, creds).Handler()
@@ -112,7 +117,7 @@ func main() {
 		}
 	}()
 	if *gatewayKey != "" {
-		log.Printf("EC20 audio loopback %s: private HTTP %s, UDP %s, gateway authentication, no hardware access", audioloop.Version, *listen, *mediaBind)
+		log.Printf("EC20 audio %s: private HTTP %s, UDP %s, gateway authentication, UAC enabled=%v", audioloop.Version, *listen, *mediaBind, *voice)
 		err = srv.Serve(listener)
 	} else {
 		log.Printf("EC20 audio loopback %s: HTTPS %s, UDP %s, no hardware access", audioloop.Version, *listen, *mediaBind)

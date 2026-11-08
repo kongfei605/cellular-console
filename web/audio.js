@@ -5,20 +5,22 @@ const $=id=>document.getElementById('audio-'+id);
 let pc=null,context=null,input=null,oscillator=null,localAnalyser=null,returnAnalyser=null;
 let peerID='',tick=null,deadline=null,starting=false,mode='',startedAt=0,goodSamples=0,updating=false,generation=0,entered=false;
 let last={mode:'',sent:0,received:0,server_received:0,server_reflected:0,frequency_hz:0,return_rms:0,verified:false};
+let voiceReady=false,lastReadyCheck=0,readyChecking=false;function activeCall(){const calls=state.status?.calls||[];return calls.filter(c=>c.state_code!==7).length===1?calls.find(c=>c.state_code===4):null;}
+function refreshVoice(){if(entered&&!pc&&!starting&&!readyChecking&&Date.now()-lastReadyCheck>4000){readyChecking=true;lastReadyCheck=Date.now();api('/api/loopback').then(s=>{voiceReady=!!s.voice_ready;}).catch(()=>{voiceReady=false;}).finally(()=>{readyChecking=false;refreshVoice();});}const call=activeCall();$('call').disabled=!entered||!voiceReady||!call||starting||!!pc||!!peerID;$('voiceReady').textContent=voiceReady?(call?'EC20 USB声卡就绪 · 呼叫已接通，可接入真实音频':'EC20 USB声卡就绪 · 请先在通话控制拨出或接听，接通后再接入'):'EC20 USB声卡未就绪或真实音频服务未启用';}
 const remote=$('remote');remote.volume=Number($('volume').value);
 async function api(path,method='GET',body){
  const target=path==='/api/loopback'?(method==='GET'?'/api/audio/status':'/api/audio/offer'):path;
  return window.ec20ConsoleAPI(target,method,body);
 }
-async function restorePeer(){const current=await api('/api/loopback');if(current.active&&current.owned){peerID=current.id;$('stop').disabled=false;$('state').textContent='上次会话待释放';$('message').textContent='检测到本次登录的未结束回环，点击停止后可重新开始。';}else if(current.active){$('message').textContent='另一个登录会话正在使用回环，结束后可开始。';}return current;}
+async function restorePeer(){const current=await api('/api/loopback');voiceReady=!!current.voice_ready;refreshVoice();if(current.active&&current.owned){peerID=current.id;$('stop').disabled=false;$('state').textContent='上次会话待释放';$('message').textContent='检测到本次登录的未结束回环，点击停止后可重新开始。';}else if(current.active){$('message').textContent='另一个登录会话正在使用回环，结束后可开始。';}return current;}
 async function enter(){
  if(entered)return;entered=true;const ticket=generation;
  $('secure').textContent=window.isSecureContext?'安全上下文 · 统一登录':'需要安全上下文';
  $('mic').disabled=$('tone').disabled=true;
  if(!window.isSecureContext||!window.RTCPeerConnection||!window.AudioContext){$('message').textContent='需要受信任的HTTPS、WebRTC和Web Audio支持。';return}
- try{const current=await restorePeer();if(entered&&ticket===generation&&!current.active){$('state').textContent='准备就绪';$('message').textContent='可先运行440Hz测试音，无需麦克风权限；测试音20秒后自动停止。';$('connection').textContent='未连接';}if(entered&&ticket===generation&&!peerID)$('mic').disabled=$('tone').disabled=false;}catch(e){if(entered&&ticket===generation){$('message').textContent=e.message+'；可离开本页后重试，其他页面继续可用。';$('state').textContent='音频后端未就绪';}}
+ try{const current=await restorePeer();if(entered&&ticket===generation&&!current.active){$('state').textContent='准备就绪';$('message').textContent='可先运行440Hz测试音，无需麦克风权限；测试音20秒后自动停止。';$('connection').textContent='未连接';}if(entered&&ticket===generation&&!peerID)$('mic').disabled=$('tone').disabled=false;refreshVoice();}catch(e){if(entered&&ticket===generation){$('message').textContent=e.message+'；可离开本页后重试，其他页面继续可用。';$('state').textContent='音频后端未就绪';}}
 }
-window.EC20Audio={enter,retry(){if(!pc&&!starting){entered=false;void enter();}},leave(){if(!entered&&!pc&&!peerID)return;entered=false;void stop('已离开音频页，回环已停止');},reset(){entered=false;void stop('登录已结束，音频资源已释放',false);}};
+window.EC20Audio={enter,refresh:refreshVoice,retry(){if(!pc&&!starting){entered=false;void enter();}},leave(){if(!entered&&!pc&&!peerID)return;entered=false;void stop('已离开音频页，回环已停止');},reset(){entered=false;void stop('登录已结束，音频资源已释放',false);}};
 function analyser(stream) {
   const source = context.createMediaStreamSource(stream), node = context.createAnalyser();
   node.fftSize = 4096; source.connect(node); return node;
@@ -44,21 +46,22 @@ function waitForICE(connection) {
 }
 async function start(sourceMode) {
   if (starting || pc) return;
+  const selectedCall=sourceMode==='call'?activeCall():null;if(sourceMode==='call'&&(!voiceReady||!selectedCall)){ $('message').textContent='需要已接通的唯一呼叫和就绪的EC20 USB声卡';return; }
   const ticket = ++generation;
   starting = true; $('mic').disabled = $('tone').disabled = true;
   $('stop').disabled = false;
-  $('state').textContent = '正在建立回环'; $('message').textContent = sourceMode === 'mic' ? '请允许本站使用麦克风。' : '正在生成测试音，并通过 69 回传。';
+  $('call').disabled=true;$('state').textContent = sourceMode==='call'?'正在连接真实通话音频':'正在建立回环'; $('message').textContent = sourceMode !== 'tone' ? '请允许本站使用麦克风。' : '正在生成测试音，并通过 69 回传。';
   $('result').className = 'result'; $('result').textContent = '验证中'; goodSamples = 0;
   last = {mode: sourceMode, sent: 0, received: 0, server_received: 0, server_reflected: 0, frequency_hz: 0, return_rms: 0, verified: false};
   try {
     context = new AudioContext(); await context.resume();
     if (ticket !== generation) return;
     mode = sourceMode;
-    if (mode === 'mic') {
+    if (mode === 'mic'||mode === 'call') {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('麦克风接口不可用，请检查 HTTPS 与浏览器权限');
       const acquired = await navigator.mediaDevices.getUserMedia({video: false, audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}});
       if (ticket !== generation) { acquired.getTracks().forEach(track => track.stop()); return; }
-      input = acquired;
+      input = acquired;input.getAudioTracks().forEach(track=>track.enabled=!$('micMuted').checked);
     } else {
       const destination = context.createMediaStreamDestination(), gain = context.createGain();
       oscillator = context.createOscillator(); oscillator.frequency.value = 440; gain.gain.value = .18;
@@ -70,11 +73,11 @@ async function start(sourceMode) {
       const stream = event.streams[0] || new MediaStream([event.track]);
       remote.srcObject = stream; returnAnalyser = analyser(stream);
       remote.play().catch(() => { $('message').textContent = '返回音频已到达，但浏览器暂停了播放。点击音量控制后重试，或允许本站自动播放。'; });
-      $('playLabel').textContent = '接收来自 69 的音频';
+      $('playLabel').textContent = mode==='call'?'接收EC20蜂窝对端声音':'接收来自69的软件回环';
     };
     connection.onconnectionstatechange = () => {
       $('connection').textContent = connection.connectionState;
-      if (connection.connectionState === 'connected') $('state').textContent = '回环运行中';
+      if (connection.connectionState === 'connected') $('state').textContent = mode==='call'?'真实通话音频运行中':'软件回环运行中';
       if (pc === connection && ['failed', 'disconnected'].includes(connection.connectionState)) void stop('连接中断，回环已停止');
     };
     const sender = connection.addTrack(input.getAudioTracks()[0], input);
@@ -84,14 +87,14 @@ async function start(sourceMode) {
     transceiver.setCodecPreferences(codecs);
     await connection.setLocalDescription(await connection.createOffer()); await waitForICE(connection);
     if (ticket !== generation) return;
-    const result = await api('/api/loopback', 'POST', {type: connection.localDescription.type, sdp: connection.localDescription.sdp});
+    const result = await api('/api/loopback', 'POST', {type: connection.localDescription.type, sdp: connection.localDescription.sdp,mode:mode==='call'?'ec20-call':'software-loopback',call:selectedCall?'/org/freedesktop/ModemManager1/Call/'+selectedCall.id:''});
     if (ticket !== generation) { await api('/api/audio/stop', 'POST', {id: result.id}); return; }
     peerID = result.id;
     await connection.setRemoteDescription(result.answer);
     if (ticket !== generation) return;
     startedAt = Date.now(); $('stop').disabled = false;
-    $('sourceLabel').textContent = mode === 'mic' ? '麦克风 · 浏览器降噪' : '440Hz 正弦测试音';
-    $('message').textContent = mode === 'mic' ? '请对麦克风说话，确认耳机中能听到返回声音。' : '测试会检查返回信号的频率与双向数据包，20 秒后自动停止。';
+    $('sourceLabel').textContent = mode !== 'tone' ? (mode==='call'?'真实通话麦克风 · 浏览器降噪':'麦克风 · 浏览器降噪') : '440Hz 正弦测试音';
+    $('message').textContent = mode==='call'?'正在将麦克风发送给EC20，并播放蜂窝对端声音；请双方复述不同短句确认。停止音频不会挂断电话。':mode === 'mic' ? '请对麦克风说话，确认耳机中能听到返回声音。' : '测试会检查返回信号的频率与双向数据包，20 秒后自动停止。';
     tick = setInterval(() => void update(), 700);
     deadline = setTimeout(() => void stop('已达到本次测试时限，回环已停止'), mode === 'tone' ? 20000 : 175000);
     await update();
@@ -122,10 +125,13 @@ async function update() {
     $('rtt').textContent = rtt === null ? '—' : `${Math.round(rtt*1000)} ms`;
     $('signal').textContent = back.frequency ? `${back.frequency} Hz · ${level(back.rms)}` : mode === 'mic' && received > 10 ? `当前音量较低 · ${level(back.rms)}` : '尚无有效返回信号';
     $('remaining').textContent = `剩余 ${Math.max(0, (mode === 'tone' ? 20 : 175) - Math.floor((Date.now()-startedAt)/1000))} 秒`;
+    if(mode==='call'&&server.mode!=='ec20-call'){await stop('服务端模式不匹配，真实音频未接入');return;}
     if (mode === 'tone' && sent > 10 && received > 10 && server.reflected > 10 && back.frequency > 400 && back.frequency < 480 && back.rms > .015) goodSamples++;
     else if (mode === 'tone') goodSamples = 0;
     if (goodSamples >= 3) {
       last.verified = true; $('result').className = 'result pass'; $('result').textContent = '回环验证通过 · 440Hz 测试音已经过 69 返回浏览器';
+    } else if (mode === 'call' && received > 10 && sent > 10) {
+      $('result').className='result';$('result').textContent='真实通话音频数据已连接 · 请双方复述短句验收，不以数据包代替听感确认';
     } else if (mode === 'mic' && received > 10 && back.rms > .005) {
       $('result').className = 'result pass'; $('result').textContent = '双向音频数据已连通 · 已检测到返回声音，请佩戴耳机确认听感';
     }
@@ -143,19 +149,21 @@ async function stop(message = '回环已停止', notify = true) {
   localAnalyser = returnAnalyser = null; remote.srcObject = null;
   $('inputMeter').value = $('returnMeter').value = 0;
   $('inputLevel').textContent = $('returnLevel').textContent = '已停止';
-  $('state').textContent = '回环已停止'; $('connection').textContent = '已关闭'; $('remaining').textContent = '媒体资源已释放';
+  $('state').textContent = '音频已停止'; $('connection').textContent = '已关闭'; $('remaining').textContent = '媒体资源已释放';
   $('playLabel').textContent = '播放已停止'; $('message').textContent = message; $('stop').disabled = true;
   if ($('result').textContent === '验证中') $('result').textContent = '本次测试已停止，尚未完成验证';
   if (id && notify) { try { await api('/api/audio/stop', 'POST', {id}); } catch { $('message').textContent += '；服务端将在超时后释放会话。'; } }
-  if (!starting) $('mic').disabled = $('tone').disabled = false;
+  if (!starting) $('mic').disabled = $('tone').disabled = false;refreshVoice();
 }
+$('call').addEventListener('click',()=>void start('call'));
 $('mic').addEventListener('click', () => void start('mic'));
 $('tone').addEventListener('click', () => void start('tone'));
 $('stop').addEventListener('click', () => void stop());
+$('micMuted').addEventListener('change',()=>input?.getAudioTracks().forEach(track=>track.enabled=!$('micMuted').checked));
 $('muted').addEventListener('change', () => { remote.muted = $('muted').checked; });
 $('volume').addEventListener('input', () => { remote.volume = Number($('volume').value); if (remote.srcObject) void remote.play().catch(() => {}); });
 $('copy').addEventListener('click', async () => {
-  const report = {version: '0.2.0', mode: 'software-loopback', secure_context: window.isSecureContext, codec: 'PCMU/8000/1', ...last, checked_at: new Date().toISOString()};
+  const report = {version: '0.3.0', transport_mode:mode==='call'?'ec20-call':'software-loopback', secure_context: window.isSecureContext, codec: 'PCMU/8000/1', ...last, checked_at: new Date().toISOString()};
   try { await navigator.clipboard.writeText(JSON.stringify(report, null, 2)); $('message').textContent = '诊断已复制，不含账号、密码或音频内容。'; } catch { $('message').textContent = '浏览器未允许复制，请查看页面中的验证结果。'; }
 });
 window.addEventListener('pagehide', () => {
