@@ -7,8 +7,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/kongfei605/ec20-toolbox/internal/hostconfig"
-	"github.com/kongfei605/ec20-toolbox/internal/voicecontrol"
+	"github.com/kongfei605/cellular-console/internal/hostconfig"
+	"github.com/kongfei605/cellular-console/internal/voicecontrol"
 	"log"
 	"net"
 	"net/http"
@@ -158,10 +158,10 @@ func main() {
 		server.Shutdown(c)
 	}()
 	if app.secure {
-		log.Printf("EC20 Console v%s: HTTPS %s; legacy HTTP redirects %s", version, *tlsListen, *listen)
+		log.Printf("Cellular Console v%s: HTTPS %s; legacy HTTP redirects %s", version, *tlsListen, *listen)
 		err = server.ServeTLS(listener, "", "")
 	} else {
-		log.Printf("EC20 Console v%s listening at http://%s (demo=%t)", version, *listen, *demo)
+		log.Printf("Cellular Console v%s listening at http://%s (demo=%t)", version, *listen, *demo)
 		err = server.Serve(listener)
 	}
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {

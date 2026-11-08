@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kongfei605/ec20-toolbox/internal/audioloop"
-	"github.com/kongfei605/ec20-toolbox/internal/hostconfig"
-	"github.com/kongfei605/ec20-toolbox/internal/voicecontrol"
+	"github.com/kongfei605/cellular-console/internal/audioloop"
+	"github.com/kongfei605/cellular-console/internal/hostconfig"
+	"github.com/kongfei605/cellular-console/internal/voicecontrol"
 )
 
 func main() {

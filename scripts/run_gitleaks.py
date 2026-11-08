@@ -22,7 +22,7 @@ CHECKSUMS={
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--binary',help='use an explicitly supplied local Gitleaks executable');a=p.parse_args()
-    with tempfile.TemporaryDirectory(prefix='ec20-gitleaks-') as directory:
+    with tempfile.TemporaryDirectory(prefix='cellular-console-gitleaks-') as directory:
         if a.binary:
             binary=Path(a.binary).resolve()
             version=subprocess.check_output([str(binary),'version'],text=True).strip()
@@ -30,7 +30,7 @@ if __name__=='__main__':
         else:
             asset,digest=CHECKSUMS[(platform.system(),platform.machine())]
             url=f'https://github.com/gitleaks/gitleaks/releases/download/v{VERSION}/gitleaks_{VERSION}_{asset}.tar.gz'
-            request=urllib.request.Request(url,headers={'User-Agent':'ec20-toolbox-release-check'})
+            request=urllib.request.Request(url,headers={'User-Agent':'cellular-console-release-check'})
             with urllib.request.urlopen(request,timeout=60) as response:data=response.read(30*1024*1024)
             if hashlib.sha256(data).hexdigest()!=digest:raise SystemExit('Gitleaks checksum mismatch')
             with tarfile.open(fileobj=io.BytesIO(data)) as archive:

@@ -1,5 +1,5 @@
 [Unit]
-Description=EC20 Toolbox - unified HTTPS console and private audio gateway
+Description=Cellular Console - unified HTTPS console and private audio gateway
 Wants=ModemManager.service ec20-failover.service
 After=network-online.target ModemManager.service ec20-failover.service
 StartLimitIntervalSec=0

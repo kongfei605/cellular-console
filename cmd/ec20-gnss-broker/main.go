@@ -3,8 +3,8 @@ package main
 import (
 	"flag"
 	"github.com/godbus/dbus/v5"
-	"github.com/kongfei605/ec20-toolbox/internal/gnsscontrol"
-	"github.com/kongfei605/ec20-toolbox/internal/hostconfig"
+	"github.com/kongfei605/cellular-console/internal/gnsscontrol"
+	"github.com/kongfei605/cellular-console/internal/hostconfig"
 	"log"
 	"net"
 	"net/http"

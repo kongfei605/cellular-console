@@ -3,8 +3,8 @@ package audioloop
 import (
 	"context"
 	"errors"
-	"github.com/kongfei605/ec20-toolbox/internal/voicecontrol"
-	"github.com/kongfei605/ec20-toolbox/internal/voicepcm"
+	"github.com/kongfei605/cellular-console/internal/voicecontrol"
+	"github.com/kongfei605/cellular-console/internal/voicepcm"
 	"sync"
 )
 

@@ -84,7 +84,7 @@ func (a *App) workspaceRoutes(mux *http.ServeMux) {
 			f, e = z.Create("README.txt")
 		}
 		if e == nil {
-			_, e = fmt.Fprint(f, "EC20 Toolbox — read-only diagnostics\nPhone numbers, SMS bodies, contacts, credentials and modem identifiers are excluded.\nIP addresses, interface counters, firmware and VPN health are included.\nNo commands were executed, no probes were sent, no network settings changed.\nCall history starts when observed; it is not carrier billing data.\n")
+			_, e = fmt.Fprint(f, "Cellular Console — read-only diagnostics\nPhone numbers, SMS bodies, contacts, credentials and modem identifiers are excluded.\nIP addresses, interface counters, firmware and VPN health are included.\nNo commands were executed, no probes were sent, no network settings changed.\nCall history starts when observed; it is not carrier billing data.\n")
 		}
 		if ce := z.Close(); e == nil {
 			e = ce

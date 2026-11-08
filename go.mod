@@ -1,4 +1,4 @@
-module github.com/kongfei605/ec20-toolbox
+module github.com/kongfei605/cellular-console
 
 go 1.26.0
 

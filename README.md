@@ -1,6 +1,8 @@
-# EC20 Toolbox
+# Cellular Console（蜂窝控制台）
 
 A Go service and Chinese Web interface for Quectel EC20 modems on Linux. Includes status monitoring, SMS conversations and forwarding, call control, a WebRTC audio bridge, guarded GNSS control and optional modem recovery.
+
+The repository and Go module are named `cellular-console`. Existing Linux binaries, service/account names (`ec20-console`, `ec20-audio-loopback`, etc.) and the `/etc/ec20-toolbox/host.json` profile path retain their established identifiers for deployment compatibility. Renaming the project does not expand the reviewed hardware support below or migrate a running host automatically.
 
 **Project status:** tested on one EC20F / `EC20CEFAGR08A03M4G` with ModemManager 1.20.4 and PPP. This is the supported hardware profile, not a claim that every EC20/EC25 firmware is compatible. Unknown profiles remain blocked for privileged operations.
 
@@ -20,8 +22,8 @@ A Go service and Chinese Web interface for Quectel EC20 modems on Linux. Include
 Requirements: Go **1.26 or newer** and Python **3.11 or newer**. No Node.js build or external frontend assets are required.
 
 ```sh
-git clone https://github.com/kongfei605/ec20-toolbox.git
-cd ec20-toolbox
+git clone https://github.com/kongfei605/cellular-console.git
+cd cellular-console
 python3 scripts/init_credentials.py --output .local/demo-credentials.json
 go run . -demo -listen 127.0.0.1:8787 \
   -credentials .local/demo-credentials.json -data-dir .local/demo-data

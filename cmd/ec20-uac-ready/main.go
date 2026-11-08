@@ -7,12 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"github.com/kongfei605/ec20-toolbox/internal/hostconfig"
-	"github.com/kongfei605/ec20-toolbox/internal/voicecontrol"
+	"github.com/kongfei605/cellular-console/internal/hostconfig"
+	"github.com/kongfei605/cellular-console/internal/voicecontrol"
 	"os"
 	"time"
 
-	"github.com/kongfei605/ec20-toolbox/internal/voicepcm"
+	"github.com/kongfei605/cellular-console/internal/voicepcm"
 )
 
 func main() {

@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kongfei605/ec20-toolbox/internal/voicepcm"
+	"github.com/kongfei605/cellular-console/internal/voicepcm"
 	"github.com/pion/webrtc/v4"
 )
 

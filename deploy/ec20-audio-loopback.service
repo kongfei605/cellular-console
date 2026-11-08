@@ -1,5 +1,5 @@
 [Unit]
-Description=EC20 Toolbox - isolated private WebRTC audio backend (software loopback by default)
+Description=Cellular Console - isolated private WebRTC audio backend (software loopback by default)
 After=network-online.target
 StartLimitIntervalSec=0
 

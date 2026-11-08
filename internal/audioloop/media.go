@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kongfei605/ec20-toolbox/internal/voicepcm"
+	"github.com/kongfei605/cellular-console/internal/voicepcm"
 	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"
 	"github.com/pion/rtp"
