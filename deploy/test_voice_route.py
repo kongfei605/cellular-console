@@ -6,6 +6,11 @@ def load(name,file):
  s=importlib.util.spec_from_file_location(name,Path(__file__).with_name(file));m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
 r=load('voice_route','ec20-voice-route.py');u=load('uac_enable','enable-uac.py')
 class VoiceRouteTests(unittest.TestCase):
+ def test_console_override_preserves_credentials_and_persistent_data(self):
+  unit=Path(__file__).with_name('ec20-console-voice.override.conf').read_text()
+  for arg in ['-credentials /etc/ec20-console/credentials.json','-data-dir /var/lib/ec20-console','-tls-cert %d/tls.crt','-tls-key %d/tls.key','-audio-gateway-key %d/audio.key']:
+   self.assertIn(arg,unit)
+  self.assertNotIn('-tls-cert /etc/',unit)
  def test_readback_requires_usb_voice(self):
   for text in ['+QPCMV: 1,2\nOK','+QPCMV: 1, 2\nOK','+QPCMV: 1\nOK']:self.assertTrue(r.route_on(text))
   for text in ['+QPCMV: 0,0','+QPCMV: 1,0','+QPCMV: 1,1','ERROR','+QPCMV: 10,2']:self.assertFalse(r.route_on(text))

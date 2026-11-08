@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path('/var/lib/ec20-uac-enable-20261108')
 STAGE=Path(__file__).resolve().parent
 MM='ModemManager.service'
-TIMER='ec20-uac-enable-rollback-r2'
+TIMER='ec20-uac-enable-rollback-r3'
 OLD='0x2C7C,0x0125,1,1,1,1,1,0,0'
 NEW='0x2C7C,0x0125,1,1,1,1,1,0,1'
 DEVICE='0000000000000000000000000000000000000000'
@@ -204,7 +204,11 @@ def install(resume=False):
   cmd('udevadm','control','--reload-rules');cmd('systemctl','daemon-reload')
   stop_mm()
   try:
-   switch(NEW);wait_usb();cmd('/usr/bin/python3','/usr/local/libexec/ec20-voice-route.py','--prepare-stopped',timeout=20)
+   switch(NEW);wait_usb()
+   # Resume may reuse an already enumerated UAC device; reloading rules alone
+   # does not update its existing nodes. Trigger only this USB's sound children.
+   cmd('udevadm','trigger','--action=change','--subsystem-match=sound','--parent-match=/sys/bus/usb/devices/1-2','--settle')
+   cmd('/usr/bin/python3','/usr/local/libexec/ec20-voice-route.py','--prepare-stopped',timeout=20)
   finally:restored()
   wait_cell();restore_gnss(before);assert protected()==baseline
   # Both AT ports must remain managed: one for PPP, one for calls/SMS/management.
