@@ -14,9 +14,9 @@ import time
 import urllib.request
 
 STAGE=Path(__file__).resolve().parent
-BACKUP=Path('/var/lib/ec20-modem-recovery-deploy/20261108')
+BACKUP=Path('/var/lib/ec20-modem-recovery-deploy/20261108-r2')
 SERVICE='ec20-modem-recovery.service'
-TIMER='ec20-modem-recovery-deploy-rollback'
+TIMER='ec20-modem-recovery-deploy-rollback-r2'
 FILES=['/usr/local/sbin/ec20-failover','/etc/ec20-failover.json',
        '/etc/NetworkManager/system-connections/ec20-cellular.nmconnection',
        '/etc/systemd/system/ec20-console.service','/etc/systemd/system/ec20-audio-loopback.service',
