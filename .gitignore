@@ -10,3 +10,28 @@ credentials.json
 *.key
 
 forwarding.json
+
+# Local deployment inputs, runtime records and release artifacts
+.env
+.env.*
+!.env.example
+*.pem
+*.crt
+*.p12
+*.pfx
+*.bundle
+*.tar.gz
+*.zip
+host.json
+failover-config.json
+rendered-deployment/
+release-artifacts/
+backups/
+inbox.json
+outbox.json
+workspace.json
+network-history.json
+*verification*.json
+gitleaks-report.*
+credentials*.json
+!configs/*.example.json
