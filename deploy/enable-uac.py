@@ -60,6 +60,7 @@ def restore_mm():
  assert not Path('/etc/systemd/system/ModemManager.service').is_symlink(),'persistent MM override'
  cmd('systemctl','unmask','--runtime',MM);cmd('systemctl','start','--no-block',MM);p.unlink()
 def stop_mm():
+ wired()
  assert cmd('systemctl','is-enabled','ModemManager')=='enabled'
  assert not (ROOT/'owner.json').exists()
  timer='ec20-uac-enable-restore-mm-'+str(time.time_ns())
@@ -145,18 +146,23 @@ def restore_gnss(before):
   assert cmd('busctl','get-property','org.freedesktop.ModemManager1',path,'org.freedesktop.ModemManager1.Modem.Location','Enabled')=='u 7'
 def link(path,target):
  p=Path(str(path)+'.pending');p.unlink(missing_ok=True);p.symlink_to(target);p.replace(path)
+def rollback_usb():
+ # Added UAC endpoints can safely stay present while cellular is the only
+ # remote path. Never tear that path down merely to restore the USB layout.
+ wired()
+ if not (ROOT/'owner.json').exists():stop_mm()
+ deadline=time.monotonic()+50
+ while True:
+  try:switch(OLD);return
+  except (FileNotFoundError,OSError,TimeoutError):
+   if time.monotonic()>=deadline:raise
+   wired();time.sleep(2)
 def rollback():
  before=json.loads((ROOT/'before.json').read_text());errors=[]
  subprocess.run(['systemctl','stop','ec20-modem-recovery','ec20-voice-route.timer','ec20-voice-route.service'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  subprocess.run(['systemctl','disable','ec20-voice-route.timer'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  try:
-  if not (ROOT/'owner.json').exists():stop_mm()
-  deadline=time.monotonic()+50
-  while True:
-   try:switch(OLD);break
-   except (FileNotFoundError,OSError,TimeoutError):
-    if time.monotonic()>=deadline:raise
-    wired();time.sleep(2)
+  rollback_usb()
  except Exception as e:errors.append('USB rollback needs review: '+str(e))
  finally:restored()
  for dest,meta in before['files'].items():

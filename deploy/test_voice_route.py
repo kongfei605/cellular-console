@@ -6,6 +6,10 @@ def load(name,file):
  s=importlib.util.spec_from_file_location(name,Path(__file__).with_name(file));m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
 r=load('voice_route','ec20-voice-route.py');u=load('uac_enable','enable-uac.py')
 class VoiceRouteTests(unittest.TestCase):
+ def test_hardware_rollback_never_tears_down_cellular_when_wired_is_unhealthy(self):
+  with patch.object(u,'wired',side_effect=AssertionError('wired unavailable')),patch.object(u,'stop_mm') as stop,patch.object(u,'switch') as switch:
+   with self.assertRaises(AssertionError):u.rollback_usb()
+   stop.assert_not_called();switch.assert_not_called()
  def test_console_override_preserves_credentials_and_persistent_data(self):
   unit=Path(__file__).with_name('ec20-console-voice.override.conf').read_text()
   for arg in ['-credentials /etc/ec20-console/credentials.json','-data-dir /var/lib/ec20-console','-tls-cert %d/tls.crt','-tls-key %d/tls.key','-audio-gateway-key %d/audio.key']:
