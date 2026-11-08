@@ -152,8 +152,12 @@ class LinuxOps:
         s['signature'] = (tuple(sorted(ips)), command(['systemctl', 'show', '-p', 'MainPID', '--value', 'NetworkManager']),
                           command(['systemctl', 'show', '-p', 'MainPID', '--value', 'ec20-failover']))
         if s['ppp']:
-            ppp = json.loads(command(['ip', '-4', '-j', 'addr', 'show', 'dev', 'ppp0']))
-            s['ip_matches'] = any(a.get('local') == f.get('cellular_ip') for d in ppp for a in d.get('addr_info', []))
+            try:
+                ppp = json.loads(command(['ip', '-4', '-j', 'addr', 'show', 'dev', 'ppp0']))
+                s['ip_matches'] = any(a.get('local') == f.get('cellular_ip') for d in ppp for a in d.get('addr_info', []))
+            except subprocess.CalledProcessError:
+                if Path('/sys/class/net/ppp0').exists(): raise
+                s['ppp'] = False  # Normal link removal between exists() and ip(8).
         s['paused'] = (RUNTIME/'paused').exists() or Path('/run/ec20-uac-query/state.json').exists()
         s['mm_active'] = command(['systemctl', 'show', MM, '-p', 'ActiveState', '--value']) == 'active'
         s['mm_masked'] = 'masked' in command(['systemctl', 'show', MM, '-p', 'UnitFileState', '--value'])
@@ -211,13 +215,16 @@ class LinuxOps:
         try:
             command(['systemd-run', '--unit='+RESTORE_UNIT, '--on-active=90s', '--timer-property=AccuracySec=1s',
                      '/usr/bin/python3', HELPER, '--restore-owned-mm'], 10)
+            deadline=time.monotonic()+60
             guard(); command(['systemctl', 'mask', '--runtime', MM], 10)
             command(['systemctl', 'stop', MM], 30)
             if command(['systemctl', 'show', MM, '-p', 'MainPID', '--value']) != '0':
                 raise RuntimeError('MM still owns modem')
             # MM is intentionally masked only inside this narrow AT window.
             def at_guard():
+                if time.monotonic()>deadline-15: raise RuntimeError('AT maintenance time budget exhausted')
                 guard(maintenance=True)
+                if time.monotonic()>deadline-15: raise RuntimeError('AT maintenance time budget exhausted')
                 if command(['systemctl', 'show', MM, '-p', 'MainPID', '--value']) != '0':
                     raise RuntimeError('MM unexpectedly running')
             at_guard(); port = secondary_port(self.usb, self.cfg)
