@@ -12,6 +12,7 @@ import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from test_host_profile import profile
 
 spec=importlib.util.spec_from_file_location('recovery',Path(__file__).with_name('ec20-modem-recovery.py'))
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
@@ -22,6 +23,21 @@ class Clock:
     def time(self):return self.value
     def monotonic(self):return self.value
     def sleep(self,seconds):self.value+=seconds
+
+
+class RecoveryConfigurationTests(unittest.TestCase):
+    def test_identity_is_from_the_reviewed_host_profile_not_recovery_options(self):
+        with patch.object(m,'read_root_json',return_value={'enabled':False}),patch.object(m,'load_host',return_value=profile()):
+            cfg=m.load_config();self.assertEqual(cfg['device_id'],profile()['device_id']);self.assertEqual(cfg['usb_path'],'2-3.4')
+        with patch.object(m,'read_root_json',return_value={'device_id':'other-device'}),patch.object(m,'load_host',return_value=profile()):
+            with self.assertRaises(ValueError):m.load_config()
+
+    def test_enabled_recovery_requires_an_explicit_https_target(self):
+        for target in ['', 'file:///etc/passwd', 'http://example.com/', 'https://user:secret@example.com/']:
+            with patch.object(m,'read_root_json',return_value={'enabled':True,'verify_url':target}),patch.object(m,'load_host',return_value=profile()):
+                with self.assertRaises(ValueError):m.load_config()
+        with patch.object(m,'read_root_json',return_value={'enabled':True,'verify_url':'https://example.com/'}),patch.object(m,'load_host',return_value=profile()):
+            self.assertTrue(m.load_config()['enabled'])
 
 
 def fault():

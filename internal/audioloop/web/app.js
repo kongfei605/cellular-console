@@ -72,7 +72,7 @@ async function start(sourceMode) {
   const ticket = ++generation;
   starting = true; $('mic').disabled = $('tone').disabled = true;
   $('stop').disabled = false;
-  $('state').textContent = '正在建立回环'; $('message').textContent = sourceMode === 'mic' ? '请允许本站使用麦克风。' : '正在生成测试音，并通过 69 回传。';
+  $('state').textContent = '正在建立回环'; $('message').textContent = sourceMode === 'mic' ? '请允许本站使用麦克风。' : '正在生成测试音，并通过服务器 回传。';
   $('result').className = 'result'; $('result').textContent = '验证中'; goodSamples = 0;
   last = {mode: sourceMode, sent: 0, received: 0, server_received: 0, server_reflected: 0, frequency_hz: 0, return_rms: 0, verified: false};
   try {
@@ -95,7 +95,7 @@ async function start(sourceMode) {
       const stream = event.streams[0] || new MediaStream([event.track]);
       remote.srcObject = stream; returnAnalyser = analyser(stream);
       remote.play().catch(() => { $('message').textContent = '返回音频已到达，但浏览器暂停了播放。点击音量控制后重试，或允许本站自动播放。'; });
-      $('playLabel').textContent = '接收来自 69 的音频';
+      $('playLabel').textContent = '接收来自 服务器的音频';
     };
     connection.onconnectionstatechange = () => {
       $('connection').textContent = connection.connectionState;
@@ -150,7 +150,7 @@ async function update() {
     if (mode === 'tone' && sent > 10 && received > 10 && server.reflected > 10 && back.frequency > 400 && back.frequency < 480 && back.rms > .015) goodSamples++;
     else if (mode === 'tone') goodSamples = 0;
     if (goodSamples >= 3) {
-      last.verified = true; $('result').className = 'result pass'; $('result').textContent = '回环验证通过 · 440Hz 测试音已经过 69 返回浏览器';
+      last.verified = true; $('result').className = 'result pass'; $('result').textContent = '回环验证通过 · 440Hz 测试音已经过服务器 返回浏览器';
     } else if (mode === 'mic' && received > 10 && back.rms > .005) {
       $('result').className = 'result pass'; $('result').textContent = '双向音频数据已连通 · 已检测到返回声音，请佩戴耳机确认听感';
     }

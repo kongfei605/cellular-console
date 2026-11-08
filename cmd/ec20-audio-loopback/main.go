@@ -16,19 +16,33 @@ import (
 	"time"
 
 	"github.com/kongfei605/ec20-toolbox/internal/audioloop"
+	"github.com/kongfei605/ec20-toolbox/internal/hostconfig"
 	"github.com/kongfei605/ec20-toolbox/internal/voicecontrol"
 )
 
 func main() {
-	listen := flag.String("listen", "192.0.2.10:8788", "HTTPS IPv4 listen address")
-	mediaBind := flag.String("media", "192.0.2.10:8789", "single VPN UDP media address")
-	origin := flag.String("origin", "https://192.0.2.10:8788", "exact browser origin")
+	listen := flag.String("listen", "127.0.0.1:8788", "HTTPS IPv4 listen address")
+	mediaBind := flag.String("media", "127.0.0.1:8789", "single VPN UDP media address")
+	origin := flag.String("origin", "https://127.0.0.1:8788", "exact browser origin")
 	cert := flag.String("cert", "/etc/ec20-audio-loopback/server.crt", "TLS leaf certificate")
 	key := flag.String("key", "/etc/ec20-audio-loopback/server.key", "TLS private key")
 	credsPath := flag.String("credentials", "/etc/ec20-console/credentials.json", "existing administrator credentials")
 	gatewayKey := flag.String("gateway-key", "", "private console gateway key; enables loopback HTTP control only")
-	voice := flag.Bool("ec20-voice", false, "enable guarded EC20 UAC calls using the fixed local voice broker")
+	voice := flag.Bool("ec20-voice", false, "enable EC20 UAC calls guarded by the reviewed host profile")
+	hostPath := flag.String("host-config", hostconfig.DefaultPath, "root-owned hardware and network profile")
+	failover := flag.String("failover-state", "/run/ec20-failover/status.json", "independent failover status")
 	flag.Parse()
+	var host hostconfig.Config
+	if *voice {
+		var e error
+		host, e = hostconfig.Load(*hostPath)
+		if e != nil {
+			log.Fatal(e)
+		}
+		if *gatewayKey == "" {
+			log.Fatal("real audio requires the private console gateway")
+		}
+	}
 
 	var creds audioloop.Credentials
 	var pair tls.Certificate
@@ -92,7 +106,7 @@ func main() {
 			log.Fatal(e)
 		}
 		if *voice {
-			app.Voice = audioloop.LiveVoice{Control: voicecontrol.Client{}, DeviceID: "0000000000000000000000000000000000000000", USBPath: "1-2", FailoverFile: "/run/ec20-failover/status.json"}
+			app.Voice = audioloop.LiveVoice{Control: voicecontrol.Client{Config: host, Failover: *failover}, DeviceID: host.DeviceID, USBPath: host.USBPath, FailoverFile: *failover}
 		}
 		handler = app.GatewayHandler()
 	} else {

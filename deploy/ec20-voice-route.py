@@ -1,12 +1,16 @@
 #!/usr/bin/python3
 """One guarded QPCMV initialization per EC20 USB generation; never changes USB/RF configuration."""
+from host_profile import load as load_host, FIRMWARE
 import argparse,datetime,fcntl,json,os,re,select,subprocess,termios,time
 from pathlib import Path
 
 RUN=Path('/run/ec20-voice-route');STATE=Path('/var/lib/ec20-voice-route')
 HOLD='ec20-voice-route-hold.service'
-DEVICE='0000000000000000000000000000000000000000'
-FIRMWARE='EC20CEFAGR08A03M4G'
+HOST=None
+def host():
+    global HOST
+    if HOST is None:HOST=load_host()
+    return HOST
 def cmd(*args,timeout=10):return subprocess.check_output(args,text=True,stderr=subprocess.PIPE,timeout=timeout).strip()
 def save(path,data,mode=0o600):
     p=path.with_suffix('.tmp')
@@ -16,23 +20,25 @@ def save(path,data,mode=0o600):
     fd=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
     try:os.fsync(fd)
     finally:os.close(fd)
-def probe():return json.loads(cmd('/usr/local/libexec/ec20-uac-ready',timeout=5))['device']
+def probe():return json.loads(cmd('/usr/local/libexec/ec20-uac-ready','-usb-path',host()['usb_path'],timeout=5))['device']
 def boot():return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 def signature():
-    return (cmd('ip','-4','-o','addr','show','dev','enp11s0').split('\\')[0].strip(),
+    return (cmd('ip','-4','-o','addr','show','dev',host()['wired_interface']).split('\\')[0].strip(),
             cmd('systemctl','show','NetworkManager','-p','MainPID','--value'),
             cmd('systemctl','show','ec20-failover','-p','MainPID','--value'))
 def guard():
     f=json.loads(Path('/run/ec20-failover/status.json').read_text())
     assert 0<=time.time()-datetime.datetime.fromisoformat(f['updated']).timestamp()<15
-    assert f['active']=='wired' and f['wired_healthy'] and f['wired_link'] and len(f['vpns'])==3 and all(f['vpns'].values())
-    assert Path('/sys/class/net/enp11s0/carrier').read_text().strip()=='1'
+    assert f['active']=='wired' and f['wired_healthy'] and f['wired_link'] and set(f['vpns'])==set(host()['vpn_interfaces']) and all(f['vpns'].values())
+    assert (Path('/sys/class/net')/host()['wired_interface']/'carrier').read_text().strip()=='1'
 def confirm_links():
     net=json.loads(Path('/etc/ec20-failover.json').read_text())
-    assert any(subprocess.run(['ping','-n','-I','enp11s0','-c','1','-W','2',x],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=4).returncode==0 for x in net['probe_targets'])
+    assert net['wired_interface']==host()['wired_interface'] and net['cell_interface']==host()['cell_interface']
+    assert len(net['vpns'])==len(host()['vpn_interfaces']) and {v['interface'] for v in net['vpns']}==set(host()['vpn_interfaces'])
+    assert any(subprocess.run(['ping','-n','-I',host()['wired_interface'],'-c','1','-W','2',x],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=4).returncode==0 for x in net['probe_targets'])
     for v in net['vpns']:assert subprocess.run(['ping','-n','-I',v['interface'],'-c','1','-W','2',v['peer']],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=4).returncode==0
 def secondary():
-    usb=Path('/sys/bus/usb/devices/1-2').resolve()
+    usb=(Path('/sys/bus/usb/devices')/host()['usb_path']).resolve()
     assert (usb/'idVendor').read_text().strip()=='2c7c' and (usb/'idProduct').read_text().strip()=='0125'
     for tty in Path('/sys/class/tty').glob('ttyUSB*'):
         dev=(tty/'device').resolve()
@@ -82,7 +88,7 @@ def restore():
             subprocess.run(['systemctl','stop',HOLD],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10)
             p.unlink(missing_ok=True)
 def main():
-    a=argparse.ArgumentParser(description=__doc__);a.add_argument('--prepare-stopped',action='store_true');a.add_argument('--restore',action='store_true');args=a.parse_args()
+    a=argparse.ArgumentParser(description=__doc__);a.add_argument('--restore',action='store_true');args=a.parse_args()
     assert os.geteuid()==0
     RUN.mkdir(mode=0o755,exist_ok=True);STATE.mkdir(mode=0o700,exist_ok=True)
     if args.restore:restore();return
@@ -91,7 +97,7 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         try:d=probe()
         except subprocess.CalledProcessError as e:
-            if e.returncode==2 and not args.prepare_stopped:return
+            if e.returncode==2:return
             raise
         generation=boot()+'|'+d['fingerprint'];ready=RUN/'ready.json'
         if ready.exists():
@@ -99,30 +105,25 @@ def main():
             if old.get('verified') is True and old.get('boot')==boot() and old.get('fingerprint')==d['fingerprint']:return
         try:guard();confirm_links()
         except (AssertionError,OSError,subprocess.SubprocessError):
-            if args.prepare_stopped:raise
             return
         wire=signature();mm_pid=cmd('systemctl','show','ModemManager','-p','MainPID','--value')
-        if args.prepare_stopped:
-            owner=json.loads(Path('/var/lib/ec20-uac-enable-20261108/owner.json').read_text())
-            assert owner.get('owned') is True and mm_pid=='0','owned UAC maintenance required'
-        else:
-            assert not Path('/run/ec20-uac-query/state.json').exists()
-            assert 'masked' not in cmd('systemctl','show','ModemManager','-p','UnitFileState','--value')
-            attempt=STATE/'attempt.json'
-            if attempt.exists() and json.loads(attempt.read_text()).get('generation')==generation:return
-            paths=json.loads(cmd('mmcli','-L','-J'))['modem-list']
-            if len(paths)!=1:return
-            modem=json.loads(cmd('mmcli','-m',paths[0],'-J'))['modem']['generic']
-            assert modem['device-identifier']==DEVICE and modem['revision']==FIRMWARE
-            if modem['state']!='connected':return
-            calls=json.loads(cmd('mmcli','-m',paths[0],'--voice-list-calls','-J')).get('modem.voice.call',[])
-            for call in calls:
-                if json.loads(cmd('mmcli','-o',call,'-J'))['call']['properties']['state']!='terminated':return
-            outbox=Path('/var/lib/ec20-console/outbox.json')
-            if outbox.exists() and any(x['status'] in ['pending','creating','ready','submitting'] for x in json.loads(outbox.read_text())):return
-            save(attempt,dict(generation=generation,at=time.time()))
-            save(RUN/'owner.json',dict(owned=True,unit=HOLD,created=time.time()))
-            subprocess.run(['systemd-run','--unit='+HOLD,'--collect','--property=RuntimeMaxSec=45s','/usr/bin/mmcli','-m',paths[0],'--inhibit'],check=True)
+        assert not Path('/run/ec20-uac-query/state.json').exists()
+        assert 'masked' not in cmd('systemctl','show','ModemManager','-p','UnitFileState','--value')
+        attempt=STATE/'attempt.json'
+        if attempt.exists() and json.loads(attempt.read_text()).get('generation')==generation:return
+        paths=json.loads(cmd('mmcli','-L','-J'))['modem-list']
+        if len(paths)!=1:return
+        modem=json.loads(cmd('mmcli','-m',paths[0],'-J'))['modem']['generic']
+        assert modem['device-identifier']==host()['device_id'] and modem['revision']==FIRMWARE
+        if modem['state']!='connected':return
+        calls=json.loads(cmd('mmcli','-m',paths[0],'--voice-list-calls','-J')).get('modem.voice.call',[])
+        for call in calls:
+            if json.loads(cmd('mmcli','-o',call,'-J'))['call']['properties']['state']!='terminated':return
+        outbox=Path('/var/lib/ec20-console/outbox.json')
+        if outbox.exists() and any(x['status'] in ['pending','creating','ready','submitting'] for x in json.loads(outbox.read_text())):return
+        save(attempt,dict(generation=generation,at=time.time()))
+        save(RUN/'owner.json',dict(owned=True,unit=HOLD,created=time.time()))
+        subprocess.run(['systemd-run','--unit='+HOLD,'--collect','--property=RuntimeMaxSec=45s','/usr/bin/mmcli','-m',paths[0],'--inhibit'],check=True)
         try:
             end=time.monotonic()+12;port=secondary()
             while not available(port):
@@ -135,5 +136,5 @@ def main():
             check();save(ready,dict(fingerprint=d['fingerprint'],boot=boot(),verified=True,at=time.time()),0o644)
             print('EC20 USB voice route verified for current generation',flush=True)
         finally:
-            if not args.prepare_stopped:restore()
+            restore()
 if __name__=='__main__':main()

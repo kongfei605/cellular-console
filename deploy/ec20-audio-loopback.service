@@ -1,5 +1,5 @@
 [Unit]
-Description=EC20 Toolbox - isolated private WebRTC audio backend (no hardware)
+Description=EC20 Toolbox - isolated private WebRTC audio backend (software loopback by default)
 After=network-online.target
 StartLimitIntervalSec=0
 
@@ -8,7 +8,7 @@ Type=simple
 DynamicUser=yes
 User=ec20-audio-loopback
 LoadCredential=audio.key:/etc/ec20-console/audio-gateway.key
-ExecStart=/opt/ec20-audio-loopback/current/ec20-audio-loopback -listen 127.0.0.1:8790 -media 192.0.2.10:8789 -gateway-key %d/audio.key
+ExecStart=/opt/ec20-audio-loopback/current/ec20-audio-loopback -listen 127.0.0.1:8790 -media @PUBLIC_HOST@:8789 -gateway-key %d/audio.key -host-config /etc/ec20-toolbox/host.json @AUDIO_FEATURES@
 Restart=on-failure
 RestartSec=5
 UMask=0077

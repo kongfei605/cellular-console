@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/kongfei605/ec20-toolbox/internal/hostconfig"
 	"github.com/kongfei605/ec20-toolbox/internal/voicecontrol"
 	"log"
 	"net"
@@ -34,7 +35,20 @@ func main() {
 	gatewayKey := flag.String("audio-gateway-key", "", "private audio gateway credential file")
 	gnssControl := flag.Bool("gnss-control", false, "allow guarded GNSS setup for the locally verified firmware profile")
 	voiceControl := flag.Bool("ec20-voice", false, "prepare guarded USB voice before dial/answer")
+	hostPath := flag.String("host-config", hostconfig.DefaultPath, "root-owned reviewed hardware and network profile")
 	flag.Parse()
+	var host hostconfig.Config
+	if !*demo {
+		var err error
+		host, err = hostconfig.Load(*hostPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if *deviceID != "" && *deviceID != host.DeviceID {
+			log.Fatal("device-id conflicts with host profile")
+		}
+		*deviceID = host.DeviceID
+	}
 	if *demo && !strings.HasPrefix(*listen, "127.0.0.1:") {
 		log.Fatal("demo mode must listen on 127.0.0.1")
 	}
@@ -60,7 +74,7 @@ func main() {
 	app.locationControl = *gnssControl
 	if *voiceControl && !*demo {
 		app.voicePrepare = func(ctx context.Context, phase, call string) error {
-			_, e := (voicecontrol.Client{}).Prepare(ctx, phase, call)
+			_, e := (voicecontrol.Client{Config: host, Failover: *failover}).Prepare(ctx, phase, call)
 			return e
 		}
 	}

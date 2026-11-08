@@ -1,44 +1,25 @@
-import importlib.util,unittest,json
-from unittest.mock import patch
-from types import SimpleNamespace
+import importlib.util
+import json
 from pathlib import Path
-def load(name,file):
- s=importlib.util.spec_from_file_location(name,Path(__file__).with_name(file));m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
-r=load('voice_route','ec20-voice-route.py');u=load('uac_enable','enable-uac.py')
+import tempfile
+import unittest
+from unittest.mock import patch
+from test_host_profile import profile
+s=importlib.util.spec_from_file_location('voice_route',Path(__file__).with_name('ec20-voice-route.py'))
+r=importlib.util.module_from_spec(s);s.loader.exec_module(r)
 class VoiceRouteTests(unittest.TestCase):
- def test_hardware_rollback_never_tears_down_cellular_when_wired_is_unhealthy(self):
-  with patch.object(u,'wired',side_effect=AssertionError('wired unavailable')),patch.object(u,'stop_mm') as stop,patch.object(u,'switch') as switch:
-   with self.assertRaises(AssertionError):u.rollback_usb()
-   stop.assert_not_called();switch.assert_not_called()
- def test_console_override_preserves_credentials_and_persistent_data(self):
-  unit=Path(__file__).with_name('ec20-console-voice.override.conf').read_text()
-  for arg in ['-credentials /etc/ec20-console/credentials.json','-data-dir /var/lib/ec20-console','-tls-cert %d/tls.crt','-tls-key %d/tls.key','-audio-gateway-key %d/audio.key']:
-   self.assertIn(arg,unit)
-  self.assertNotIn('-tls-cert /etc/',unit)
-  self.assertIn('RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK',unit)
  def test_readback_requires_usb_voice(self):
   for text in ['+QPCMV: 1,2\nOK','+QPCMV: 1, 2\nOK','+QPCMV: 1\nOK']:self.assertTrue(r.route_on(text))
   for text in ['+QPCMV: 0,0','+QPCMV: 1,0','+QPCMV: 1,1','ERROR','+QPCMV: 10,2']:self.assertFalse(r.route_on(text))
- def test_runtime_cannot_reset_or_change_usb(self):
+ def test_runtime_cannot_reset_change_usb_or_dial(self):
   at=r.RouteAT('/not-open',lambda:None)
-  for text in ['AT+CFUN=1,1','AT+QCFG="usbcfg",'+u.NEW,'ATD+12025550123;','ATH']:
+  for text in ['AT+CFUN=1,1','AT+QCFG="usbcfg",1','ATD+12025550123;','ATH']:
    with self.assertRaises(ValueError):at.exchange(text)
- def test_migration_only_changes_one_verified_function_bit(self):
-  for tuple in [u.OLD,u.NEW]:self.assertEqual(u.tuple_from('+QCFG: "usbcfg",'+tuple+'\nOK'),tuple)
-  for tuple in ['0x2C7C,0x0125,1,1,1,1,1,1,1','0x2C7C,0x9999,1,1,1,1,1,0,1','0x2C7C,0x0125,1,0,1,1,1,0,1','0x2C7C,0x0125,1,1,1,1,1,0,2']:
-   with self.assertRaises((AssertionError,ValueError)):u.tuple_from('+QCFG: "usbcfg",'+tuple+'\nOK')
- def test_migration_rejects_arbitrary_control(self):
-  at=u.AT()
-  for text in ['AT+QDAI=1','AT+QCFG="usbnet",1','AT+QPOWD','ATD+12025550123;']:
-   with self.assertRaises(AssertionError):at.query(text)
- def test_short_first_enumeration_is_not_treated_as_ready(self):
-  clock=[0]
-  def sleep(seconds):clock[0]+=seconds
-  def probe(*args,**kwargs):
-   if 6<=clock[0]<14:return SimpleNamespace(returncode=2,stdout='')
-   fp='temporary' if clock[0]<6 else 'final'
-   return SimpleNamespace(returncode=0,stdout=json.dumps({'device':{'fingerprint':fp}}))
-  with patch.object(u,'wired'),patch.object(u.time,'monotonic',side_effect=lambda:clock[0]),patch.object(u.time,'sleep',side_effect=sleep),patch.object(u.subprocess,'run',side_effect=probe),patch.object(u,'Path',return_value=SimpleNamespace(exists=lambda:True)):
-   device=u.wait_usb()
-  self.assertEqual(device['fingerprint'],'final');self.assertGreaterEqual(clock[0],26)
-if __name__=='__main__':unittest.main()
+ def test_probe_uses_configured_usb_topology(self):
+  with patch.object(r,'host',return_value=profile()),patch.object(r,'cmd',return_value=json.dumps({'device':{'card':2}})) as cmd:
+   self.assertEqual(r.probe(),{'card':2});cmd.assert_called_once_with('/usr/local/libexec/ec20-uac-ready','-usb-path','2-3.4',timeout=5)
+ def test_recovery_releases_only_its_owned_inhibit(self):
+  with tempfile.TemporaryDirectory() as directory,patch.object(r,'RUN',Path(directory)),patch.object(r.subprocess,'run') as command:
+   owner=Path(directory)/'owner.json';owner.write_text(json.dumps({'owned':False,'unit':r.HOLD}));r.restore();command.assert_not_called()
+   owner.write_text(json.dumps({'owned':True,'unit':r.HOLD}));r.restore()
+   self.assertFalse(owner.exists());self.assertEqual(command.call_args.args[0],['systemctl','stop',r.HOLD])

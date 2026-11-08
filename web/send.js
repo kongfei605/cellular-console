@@ -44,7 +44,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   smsDraft.number=number;smsDraft.text=text;$('#sms-summary-number').textContent=number;$('#sms-summary-text').textContent=text;
   $('#sms-summary-info').textContent=`${info.encoding} · 预计 ${info.segments} 段，实际计费以运营商为准。`;
   $('#sms-confirm-title').textContent=state.status.demo?'确认模拟发送短信':'确认发送短信';
-  $('#sms-confirm-note').textContent=state.status.demo?'演示设备不会向任何真实号码发送短信。':'确认后将使用69上EC20的SIM发送，可能产生短信费用。';
+  $('#sms-confirm-note').textContent=state.status.demo?'演示设备不会向任何真实号码发送短信。':'确认后将使用服务器上EC20的SIM发送，可能产生短信费用。';
   $('#sms-dialog').close();$('#sms-confirm-dialog').showModal();
  });
  $('#sms-send').addEventListener('click',async()=>{

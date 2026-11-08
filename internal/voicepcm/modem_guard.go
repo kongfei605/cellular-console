@@ -29,9 +29,13 @@ type SystemGuard struct {
 	conn                         *dbus.Conn
 	owner, modemID, failoverFile string
 	call                         dbus.ObjectPath
+	vpnInterfaces                []string
 }
 
-func NewSystemGuard(ctx context.Context, modemID, callPath, failoverFile string) (*SystemGuard, error) {
+func NewSystemGuard(ctx context.Context, modemID, callPath, failoverFile string, vpnInterfaces ...string) (*SystemGuard, error) {
+	if len(vpnInterfaces) == 0 {
+		vpnInterfaces = []string{"tun0", "tun1", "tun2"}
+	}
 	if modemID == "" || !callPathPattern.MatchString(callPath) || failoverFile == "" {
 		return nil, errors.New("pinned modem, full call path and failover file required")
 	}
@@ -47,7 +51,7 @@ func NewSystemGuard(ctx context.Context, modemID, callPath, failoverFile string)
 		conn.Close()
 		return nil, err
 	}
-	return &SystemGuard{conn: conn, owner: owner, modemID: modemID, call: dbus.ObjectPath(callPath), failoverFile: failoverFile}, nil
+	return &SystemGuard{conn: conn, owner: owner, modemID: modemID, call: dbus.ObjectPath(callPath), failoverFile: failoverFile, vpnInterfaces: vpnInterfaces}, nil
 }
 
 func (g *SystemGuard) Close() error  { g.mu.Lock(); defer g.mu.Unlock(); return g.conn.Close() }
@@ -78,7 +82,7 @@ func (g *SystemGuard) Check(parent context.Context) error {
 	if err != nil {
 		return err
 	}
-	state, err := readState(objects, call, b, g.modemID, g.call, time.Now().UTC())
+	state, err := readState(objects, call, b, g.modemID, g.call, time.Now().UTC(), g.vpnInterfaces...)
 	if err != nil {
 		return err
 	}
@@ -115,7 +119,7 @@ func hydrateCalls(objects managedObjects, modemID string, readCall func(dbus.Obj
 	return nil
 }
 
-func readState(objects managedObjects, call map[string]dbus.Variant, failover []byte, modemID string, callPath dbus.ObjectPath, observed time.Time) (State, error) {
+func readState(objects managedObjects, call map[string]dbus.Variant, failover []byte, modemID string, callPath dbus.ObjectPath, observed time.Time, vpnInterfaces ...string) (State, error) {
 	var out State
 	var f struct {
 		Updated  string          `json:"updated"`
@@ -160,5 +164,20 @@ func readState(objects managedObjects, call map[string]dbus.Variant, failover []
 	}
 	code, _ := call["State"].Value().(int32)
 	return State{Observed: observed, FailoverUpdated: t, ModemID: modemID, Present: f.Present, CallID: string(callPath), CallActive: code == 4,
-		Primary: f.Primary, WiredHealthy: f.Wired, CellularHealthy: f.Cellular, VPNsHealthy: f.VPNs["tun0"] && f.VPNs["tun1"] && f.VPNs["tun2"]}, nil
+		Primary: f.Primary, WiredHealthy: f.Wired, CellularHealthy: f.Cellular, VPNsHealthy: vpnsHealthy(f.VPNs, vpnInterfaces)}, nil
+}
+
+func vpnsHealthy(actual map[string]bool, expected []string) bool {
+	if len(expected) == 0 {
+		expected = []string{"tun0", "tun1", "tun2"}
+	}
+	if len(actual) != len(expected) {
+		return false
+	}
+	for _, name := range expected {
+		if !actual[name] {
+			return false
+		}
+	}
+	return true
 }

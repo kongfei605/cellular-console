@@ -12,7 +12,30 @@ import (
 	"time"
 )
 
-type NetworkGuard struct{ Failover string }
+type NetworkGuard struct {
+	Failover               string
+	CellInterface, USBPath string
+	VPNInterfaces          []string
+}
+
+func (g NetworkGuard) cell() string {
+	if g.CellInterface != "" {
+		return g.CellInterface
+	}
+	return "ppp0"
+}
+func (g NetworkGuard) usb() string {
+	if g.USBPath != "" {
+		return g.USBPath
+	}
+	return "1-2"
+}
+func (g NetworkGuard) vpns() []string {
+	if len(g.VPNInterfaces) > 0 {
+		return g.VPNInterfaces
+	}
+	return []string{"tun0", "tun1", "tun2"}
+}
 
 func (g NetworkGuard) Check() error {
 	var f struct {
@@ -35,15 +58,15 @@ func (g NetworkGuard) Check() error {
 	_ = json.Unmarshal(fields["cellular_ip"], &f.CellularIP)
 	t, e := time.Parse("2006-01-02T15:04:05-0700", f.Updated)
 	age := time.Since(t)
-	if e != nil || age > 30*time.Second || age < -time.Second || f.Active != "wired" || !f.WiredHealthy || !f.CellularPresent || !f.CellularHealthy || f.CellularIP == "" || len(f.VPNs) != 3 {
+	if e != nil || age > 30*time.Second || age < -time.Second || f.Active != "wired" || !f.WiredHealthy || !f.CellularPresent || !f.CellularHealthy || f.CellularIP == "" || len(f.VPNs) != len(g.vpns()) {
 		return errors.New("network guard")
 	}
-	for _, up := range f.VPNs {
-		if !up {
+	for _, name := range g.vpns() {
+		if !f.VPNs[name] {
 			return errors.New("VPN guard")
 		}
 	}
-	iface, e := net.InterfaceByName("ppp0")
+	iface, e := net.InterfaceByName(g.cell())
 	if e != nil {
 		return e
 	}
@@ -60,7 +83,7 @@ func (g NetworkGuard) Check() error {
 	if !found {
 		return errors.New("PPP address guard")
 	}
-	if _, e := os.ReadFile("/sys/bus/usb/devices/1-2/devnum"); e != nil {
+	if _, e := os.ReadFile(filepath.Join("/sys/bus/usb/devices", g.usb(), "devnum")); e != nil {
 		return e
 	}
 	return nil
@@ -68,14 +91,14 @@ func (g NetworkGuard) Check() error {
 func (g NetworkGuard) Signature() (string, error) {
 	// Includes PPP identity, address, USB enumeration and running PPP process IDs.
 	parts := []string{}
-	for _, p := range []string{"/sys/class/net/ppp0/ifindex", "/sys/bus/usb/devices/1-2/devnum"} {
+	for _, p := range []string{filepath.Join("/sys/class/net", g.cell(), "ifindex"), filepath.Join("/sys/bus/usb/devices", g.usb(), "devnum")} {
 		b, e := os.ReadFile(p)
 		if e != nil && !os.IsNotExist(e) {
 			return "", e
 		}
 		parts = append(parts, p+"="+string(b))
 	}
-	if iface, e := net.InterfaceByName("ppp0"); e == nil {
+	if iface, e := net.InterfaceByName(g.cell()); e == nil {
 		a, e := iface.Addrs()
 		if e != nil {
 			return "", e

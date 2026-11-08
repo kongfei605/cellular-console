@@ -23,7 +23,7 @@ type NetworkConfig struct {
 }
 
 func defaultNetworkConfig() NetworkConfig {
-	return NetworkConfig{WiredInterface: "enp11s0", CellInterface: "ppp0", IntervalSeconds: 5, FailureCount: 3, RecoverySeconds: 30, ProbeTargets: []string{"223.5.5.5", "119.29.29.29"}}
+	return NetworkConfig{WiredInterface: "eth0", CellInterface: "ppp0", IntervalSeconds: 5, FailureCount: 3, RecoverySeconds: 30, ProbeTargets: []string{"223.5.5.5", "119.29.29.29"}}
 }
 
 type InterfaceStats struct {

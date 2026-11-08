@@ -21,7 +21,7 @@ func (v LiveVoice) Ready() error {
 	if _, e := voicepcm.Discover("/sys", "/proc", v.USBPath); e != nil {
 		return e
 	}
-	return voicecontrol.Ready()
+	return v.Control.Ready()
 }
 func (v LiveVoice) Prepare(ctx context.Context, call string) (voicepcm.Factory, func(), error) {
 	if !voicecontrol.CallPath.MatchString(call) {
@@ -34,7 +34,7 @@ func (v LiveVoice) Prepare(ctx context.Context, call string) (voicepcm.Factory, 
 	if e != nil {
 		return nil, nil, e
 	}
-	guard, e := voicepcm.NewSystemGuard(ctx, v.DeviceID, call, v.FailoverFile)
+	guard, e := voicepcm.NewSystemGuard(ctx, v.DeviceID, call, v.FailoverFile, v.Control.Config.VPNInterfaces...)
 	if e != nil {
 		return nil, nil, e
 	}

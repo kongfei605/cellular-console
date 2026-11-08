@@ -22,7 +22,7 @@ import (
 )
 
 func run() error {
-	origin := flag.String("origin", "https://192.0.2.10:8788", "audio service origin")
+	origin := flag.String("origin", "https://127.0.0.1:8788", "audio service origin")
 	certPath := flag.String("cert", "", "explicit trusted server certificate file")
 	flag.Parse()
 	if *certPath == "" {

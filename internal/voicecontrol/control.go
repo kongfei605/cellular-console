@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/godbus/dbus/v5"
 	"github.com/kongfei605/ec20-toolbox/internal/gnsscontrol"
+	"github.com/kongfei605/ec20-toolbox/internal/hostconfig"
 	"github.com/kongfei605/ec20-toolbox/internal/voicepcm"
 	"os"
 	"regexp"
@@ -69,8 +70,11 @@ func validateLease(raw []byte, fingerprint, boot string) error {
 	}
 	return nil
 }
-func Ready() error {
-	d, e := voicepcm.Discover("/sys", "/proc", "1-2")
+func (c Client) Ready() error {
+	if e := c.Config.Validate(); e != nil {
+		return e
+	}
+	d, e := voicepcm.Discover("/sys", "/proc", c.Config.USBPath)
 	if e != nil {
 		return e
 	}
@@ -94,15 +98,18 @@ func Ready() error {
 	return validateLease(raw, d.Fingerprint, string(boot))
 }
 
-type Client struct{}
+type Client struct {
+	Config   hostconfig.Config
+	Failover string
+}
 
-func (Client) Prepare(ctx context.Context, phase, call string) (Reply, error) {
+func (c Client) Prepare(ctx context.Context, phase, call string) (Reply, error) {
 	var out Reply
 	r := Request{Phase: phase, Call: call}
 	if phase != "dial" && phase != "accept" && phase != "active" {
 		return out, errors.New("invalid voice phase")
 	}
-	if e := Ready(); e != nil {
+	if e := c.Ready(); e != nil {
 		return out, e
 	}
 	conn, e := dbus.ConnectSystemBus()
@@ -110,8 +117,8 @@ func (Client) Prepare(ctx context.Context, phase, call string) (Reply, error) {
 		return out, e
 	}
 	defer conn.Close()
-	m := Modem{Conn: conn, DeviceID: "0000000000000000000000000000000000000000"}
-	g := gnsscontrol.NetworkGuard{Failover: "/run/ec20-failover/status.json"}
+	m := Modem{Conn: conn, DeviceID: c.Config.DeviceID}
+	g := gnsscontrol.NetworkGuard{Failover: c.Failover, CellInterface: c.Config.CellInterface, USBPath: c.Config.USBPath, VPNInterfaces: c.Config.VPNInterfaces}
 	if e = g.Check(); e != nil {
 		return out, e
 	}
@@ -143,7 +150,7 @@ func (Client) Prepare(ctx context.Context, phase, call string) (Reply, error) {
 	if e = g.Check(); e != nil {
 		return out, e
 	}
-	if e = Ready(); e != nil {
+	if e = c.Ready(); e != nil {
 		return out, e
 	}
 	return Reply{Owner: after.Owner}, nil

@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 """Bounded recovery of a USB-present but MM-missing EC20. Never manages routes/VPNs."""
+from host_profile import load as load_host, read_root_json, FIRMWARE
 import argparse
 import datetime
 import fcntl
@@ -14,6 +15,7 @@ import signal
 import subprocess
 import termios
 import time
+from urllib.parse import urlsplit
 
 CONFIG = Path('/etc/ec20-modem-recovery.json')
 STATE = Path('/var/lib/ec20-modem-recovery')
@@ -21,8 +23,8 @@ RUNTIME = Path('/run/ec20-modem-recovery')
 HELPER = '/usr/local/libexec/ec20-modem-recovery.py'
 RESTORE_UNIT = 'ec20-modem-recovery-mm-restore'
 MM = 'ModemManager.service'
-DEFAULTS = dict(enabled=False, usb_path='1-2', vendor='2c7c', product='0125',
-                device_id='0000000000000000000000000000000000000000',
+DEFAULTS = dict(enabled=False, usb_path='', vendor='2c7c', product='0125',
+                device_id='', verify_url='',
                 firmware='EC20CEFAGR08A03M4G', fault_seconds=90,
                 scan_wait=30, rediscover_wait=75, reset_wait=120,
                 verify_seconds=20, interval_seconds=5, cycle_spacing=900,
@@ -47,14 +49,17 @@ def atomic_json(path, value, mode=0o600):
 
 
 def load_config():
-    settings = json.loads(CONFIG.read_text())
-    if not isinstance(settings, dict) or set(settings) - set(DEFAULTS):
+    settings = read_root_json(CONFIG)
+    host = load_host()
+    if not isinstance(settings, dict) or set(settings) - (set(DEFAULTS) - {'device_id','usb_path','vendor','product','firmware'}):
         raise ValueError('unknown recovery configuration')
     cfg = {**DEFAULTS, **settings}
-    if type(cfg['enabled']) is not bool or cfg['usb_path'] != '1-2' or (cfg['vendor'], cfg['product']) != ('2c7c', '0125'):
-        raise ValueError('unsupported hardware profile')
-    for key in ['device_id', 'firmware']:
-        if cfg[key] != DEFAULTS[key]: raise ValueError('unverified hardware profile')
+    if type(cfg['enabled']) is not bool: raise ValueError('enabled must be boolean')
+    cfg.update(device_id=host['device_id'],usb_path=host['usb_path'],firmware=FIRMWARE)
+    target=urlsplit(cfg['verify_url'])
+    if cfg['enabled'] or cfg['verify_url']:
+        if target.scheme!='https' or not target.hostname or target.username or target.password or target.fragment:
+            raise ValueError('explicit credential-free HTTPS verification URL required')
     # Production budgets cannot be shortened by a config typo or a test setting.
     for key in ['fault_seconds', 'scan_wait', 'rediscover_wait', 'reset_wait', 'verify_seconds', 'cycle_spacing', 'reset_spacing', 'failure_breaker_seconds']:
         if type(cfg[key]) is not int or not DEFAULTS[key] <= cfg[key] <= 86400:
@@ -124,8 +129,9 @@ class LinuxOps:
     def __init__(self, cfg):
         self.cfg = cfg
         self.net = json.loads(Path('/etc/ec20-failover.json').read_text())
-        assert self.net['wired_interface'] == 'enp11s0' and self.net['cell_interface'] == 'ppp0'
-        assert len(self.net['vpns']) == 3
+        host=load_host()
+        assert self.net['wired_interface']==host['wired_interface'] and self.net['cell_interface']==host['cell_interface']
+        assert len(self.net['vpns'])==len(host['vpn_interfaces']) and {v['interface'] for v in self.net['vpns']}==set(host['vpn_interfaces'])
         self.usb = Path('/sys/bus/usb/devices') / cfg['usb_path']
 
     def usb_identity(self):
@@ -138,25 +144,25 @@ class LinuxOps:
 
     def snapshot(self):
         s = dict(usb=self.usb_identity(), mm_known=False, target=False, other_modems=False,
-                 connected=False, ppp=Path('/sys/class/net/ppp0').exists(), ip_matches=False)
+                 connected=False, ppp=Path('/sys/class/net/'+self.net.get('cell_interface','ppp0')).exists(), ip_matches=False)
         f = json.loads(Path('/run/ec20-failover/status.json').read_text())
         age = time.time() - datetime.datetime.fromisoformat(f['updated']).timestamp()
         s['fresh'] = 0 <= age < 15
-        addresses = json.loads(command(['ip', '-4', '-j', 'addr', 'show', 'dev', 'enp11s0']))
+        addresses = json.loads(command(['ip', '-4', '-j', 'addr', 'show', 'dev', self.net.get('wired_interface','eth0')]))
         ips = [a['local'] for d in addresses for a in d.get('addr_info', []) if a.get('scope') == 'global']
-        carrier = Path('/sys/class/net/enp11s0/carrier').read_text().strip() == '1'
+        carrier = Path('/sys/class/net/'+self.net.get('wired_interface','eth0')+'/carrier').read_text().strip() == '1'
         s['wired'] = (f.get('active') == 'wired' and f.get('wired_healthy') is True and
                       f.get('wired_link') is True and carrier and f.get('wired_ip') in ips)
-        s['vpn'] = len(f.get('vpns', {})) == 3 and all(f['vpns'].get(v['interface']) is True for v in self.net['vpns'])
+        s['vpn'] = len(f.get('vpns', {})) == len(self.net['vpns']) and all(f['vpns'].get(v['interface']) is True for v in self.net['vpns'])
         s['cell_healthy'] = f.get('cellular_healthy') is True and bool(f.get('cellular_ip'))
         s['signature'] = (tuple(sorted(ips)), command(['systemctl', 'show', '-p', 'MainPID', '--value', 'NetworkManager']),
                           command(['systemctl', 'show', '-p', 'MainPID', '--value', 'ec20-failover']))
         if s['ppp']:
             try:
-                ppp = json.loads(command(['ip', '-4', '-j', 'addr', 'show', 'dev', 'ppp0']))
+                ppp = json.loads(command(['ip', '-4', '-j', 'addr', 'show', 'dev', self.net.get('cell_interface','ppp0')]))
                 s['ip_matches'] = any(a.get('local') == f.get('cellular_ip') for d in ppp for a in d.get('addr_info', []))
             except subprocess.CalledProcessError:
-                if Path('/sys/class/net/ppp0').exists(): raise
+                if Path('/sys/class/net/'+self.net.get('cell_interface','ppp0')).exists(): raise
                 s['ppp'] = False  # Normal link removal between exists() and ip(8).
         s['paused'] = (RUNTIME/'paused').exists() or Path('/run/ec20-uac-query/state.json').exists()
         voice_owner=Path('/run/ec20-voice-route/owner.json')
@@ -191,7 +197,7 @@ class LinuxOps:
         # Independently bound probes; never changes routes, DNS or a VPN session.
         ok = False
         for target in self.net['probe_targets']:
-            if subprocess.run(['ping', '-n', '-I', 'enp11s0', '-c', '1', '-W', '2', target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4).returncode == 0:
+            if subprocess.run(['ping', '-n', '-I', self.net.get('wired_interface','eth0'), '-c', '1', '-W', '2', target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4).returncode == 0:
                 ok = True; break
         if not ok: return False
         for vpn in self.net['vpns']:
@@ -249,8 +255,8 @@ class LinuxOps:
             subprocess.run(['systemctl', 'stop', RESTORE_UNIT+'.timer'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
 
     def verify_data(self):
-        r = subprocess.run(['curl', '--noproxy', '*', '--interface', 'ppp0', '-4', '--connect-timeout', '5', '--max-time', '12',
-                            '-sS', '-o', '/dev/null', '-w', '%{http_code}', 'https://www.baidu.com/'], capture_output=True, text=True, timeout=15)
+        r = subprocess.run(['curl', '--noproxy', '*', '--interface', self.net.get('cell_interface','ppp0'), '-4', '--connect-timeout', '5', '--max-time', '12',
+                            '-sS', '-o', '/dev/null', '-w', '%{http_code}', self.cfg['verify_url']], capture_output=True, text=True, timeout=15)
         return r.returncode == 0 and r.stdout.strip() == '200'
 
 

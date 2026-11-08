@@ -3,7 +3,7 @@ Description=EC20 narrowly scoped GNSS privilege broker
 Requires=ec20-gnss-broker.socket
 After=ec20-gnss-broker.socket ModemManager.service
 [Service]
-ExecStart=/opt/ec20-gnss-broker/current/ec20-gnss-broker -device-id 0000000000000000000000000000000000000000
+ExecStart=/opt/ec20-gnss-broker/current/ec20-gnss-broker -host-config /etc/ec20-toolbox/host.json
 User=root
 Group=ec20-console
 NoNewPrivileges=true

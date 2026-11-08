@@ -20,7 +20,7 @@ async function api(path,method='GET',body){
 function parseTimestamp(value){return new Date(typeof value==='string'?value.replace(/([+-]\d{2})(\d{2})$/,'$1:$2'):value);}
 function dateText(value,short=false){const d=parseTimestamp(value);if(!value||!Number.isFinite(d.getTime()))return '时间未知';return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',...(short?{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}:{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'})}).format(d);}
 function pill(label,kind='green',dot=false){return `<span class="pill ${kind}">${dot?'<i class="dot"></i>':''}${esc(label)}</span>`;}
-function heading(title,subtitle,overline='DEVICE WORKSPACE'){return `<div class="page-heading"><div><div class="eyebrow">${overline}</div><h1>${title}</h1><p>${subtitle}</p></div><div class="heading-meta">${pill(state.status?.radio?.present?'EC20 已连接':'EC20 未连接',state.status?.radio?.present?'green':'amber',true)}<small>EC20 HOST / 192.0.2.10</small></div></div>`;}
+function heading(title,subtitle,overline='DEVICE WORKSPACE'){return `<div class="page-heading"><div><div class="eyebrow">${overline}</div><h1>${title}</h1><p>${subtitle}</p></div><div class="heading-meta">${pill(state.status?.radio?.present?'EC20 已连接':'EC20 未连接',state.status?.radio?.present?'green':'amber',true)}<small>${esc(location.host)}</small></div></div>`;}
 function empty(iconName,title,text){return `<div class="empty-state"><div class="empty-icon">${icon(iconName)}</div><h3>${title}</h3><p>${text}</p></div>`;}
 function operatorName(raw){if(/UNICOM/i.test(raw||''))return '中国联通';if(/MOBILE/i.test(raw||''))return '中国移动';if(/TELECOM/i.test(raw||''))return '中国电信';return raw||'未注册';}
 function overview(){
@@ -79,7 +79,7 @@ function render(force=false){window.EC20Audio?.refresh();
 async function sync(){
  if(!state.logged||polling)return;polling=true;const epoch=state.authEpoch;
  try{const s=await api('/api/status');if(!state.logged||epoch!==state.authEpoch)return;if(!state.status||new Date(s.updated)>=new Date(state.status.updated))state.status=s;observeNotifications(s);await loadWorkspace();if(state.view==='location')await loadLocation();if(state.view==='forwarding')await loadForwarding();if(!state.logged||epoch!==state.authEpoch)return;if(state.view==='inbox')await loadConversations(false);$('#sync-label').textContent='实时同步';render();}
- catch(e){if(state.logged){$('#sync-label').textContent='连接暂时中断';if(state.status){state.status.network.fresh=false;state.status.call_allowed=false;state.status.sms_send_allowed=false;state.status.sms_block_reason='无法确认网络状态，暂时不能发送短信';state.status.call_block_reason='无法确认网络状态，通话控制暂时锁定';state.status.error='与 69 的连接暂时中断，正在显示上次同步的数据';render();}}}
+ catch(e){if(state.logged){$('#sync-label').textContent='连接暂时中断';if(state.status){state.status.network.fresh=false;state.status.call_allowed=false;state.status.sms_send_allowed=false;state.status.sms_block_reason='无法确认网络状态，暂时不能发送短信';state.status.call_block_reason='无法确认网络状态，通话控制暂时锁定';state.status.error='与 服务器的连接暂时中断，正在显示上次同步的数据';render();}}}
  finally{polling=false;}
 }
 async function copyText(text){

@@ -1,3 +1,3 @@
 # Only the EC20's own ALSA nodes are accessible to the isolated audio account.
-SUBSYSTEM=="sound", KERNEL=="controlC*", KERNELS=="1-2", ATTRS{idVendor}=="2c7c", ATTRS{idProduct}=="0125", GROUP="ec20-call-audio", MODE="0660"
-SUBSYSTEM=="sound", KERNEL=="pcmC*D0[cp]", KERNELS=="1-2", ATTRS{idVendor}=="2c7c", ATTRS{idProduct}=="0125", GROUP="ec20-call-audio", MODE="0660"
+SUBSYSTEM=="sound", KERNEL=="controlC*", KERNELS=="@USB_PATH@", ATTRS{idVendor}=="2c7c", ATTRS{idProduct}=="0125", GROUP="ec20-call-audio", MODE="0660"
+SUBSYSTEM=="sound", KERNEL=="pcmC*D0[cp]", KERNELS=="@USB_PATH@", ATTRS{idVendor}=="2c7c", ATTRS{idProduct}=="0125", GROUP="ec20-call-audio", MODE="0660"
