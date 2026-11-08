@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path('/var/lib/ec20-uac-enable-20261108')
 STAGE=Path(__file__).resolve().parent
 MM='ModemManager.service'
-TIMER='ec20-uac-enable-rollback'
+TIMER='ec20-uac-enable-rollback-r2'
 OLD='0x2C7C,0x0125,1,1,1,1,1,0,0'
 NEW='0x2C7C,0x0125,1,1,1,1,1,0,1'
 DEVICE='0000000000000000000000000000000000000000'
@@ -106,19 +106,27 @@ def tuple_from(reply):
 def switch(target):
  with AT() as at:
   assert FIRMWARE in at.query('AT+CGMR');current=tuple_from(at.query('AT+QCFG="usbcfg"'))
-  if current==target:return False
+  if current==target:
+   audio=any((p/'bInterfaceClass').read_text().strip()=='01' for p in Path('/sys/bus/usb/devices/1-2').glob('1-2:*') if (p/'bInterfaceClass').exists())
+   if audio==(target==NEW):return False
+   at.query('AT+CFUN=1,1');return True
   at.query('AT+QCFG="usbcfg",'+target);assert tuple_from(at.query('AT+QCFG="usbcfg"'))==target
   print('UAC function bit saved; restarting EC20',flush=True);at.query('AT+CFUN=1,1');return True
 def wait_usb():
- end=time.monotonic()+40
+ end=time.monotonic()+60;seen=None;stable=None
  while time.monotonic()<end:
   wired()
   try:
    p=subprocess.run(['/usr/local/libexec/ec20-uac-ready'],capture_output=True,text=True,timeout=5)
-   if p.returncode==0:return json.loads(p.stdout)['device']
-  except (OSError,subprocess.SubprocessError):pass
+   if p.returncode==0:
+    d=json.loads(p.stdout)['device'];fingerprint=d['fingerprint']
+    if seen!=fingerprint:seen=fingerprint;stable=time.monotonic()
+    # This firmware enumerates twice during CFUN reboot. Reject the short first generation.
+    if time.monotonic()-stable>=12 and Path('/dev/serial/by-id/usb-Android_Android_0123456789ABCDEF-if03-port0').exists():return d
+   else:seen=None;stable=None
+  except (OSError,subprocess.SubprocessError):seen=None;stable=None
   time.sleep(2)
- raise RuntimeError('EC20 UAC S16_LE/8000/mono endpoint not ready')
+ raise RuntimeError('stable EC20 UAC/secondary AT generation not ready')
 def wait_cell():
  end=time.monotonic()+135;good=0
  while time.monotonic()<end:
@@ -143,7 +151,12 @@ def rollback():
  subprocess.run(['systemctl','disable','ec20-voice-route.timer'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  try:
   if not (ROOT/'owner.json').exists():stop_mm()
-  switch(OLD)
+  deadline=time.monotonic()+50
+  while True:
+   try:switch(OLD);break
+   except (FileNotFoundError,OSError,TimeoutError):
+    if time.monotonic()>=deadline:raise
+    wired();time.sleep(2)
  except Exception as e:errors.append('USB rollback needs review: '+str(e))
  finally:restored()
  for dest,meta in before['files'].items():
@@ -160,18 +173,24 @@ def rollback():
  subprocess.run(['systemctl','stop',TIMER+'.timer'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  save(ROOT/'rollback-result.json',dict(errors=errors,network_config_unchanged=protected()==before['protected']))
  print(json.dumps(dict(rolled_back=True,errors=errors)),flush=True)
-def install():
- baseline=preflight();assert not (ROOT/'before.json').exists(),'migration already attempted; review backup first'
+def install(resume=False):
+ baseline=preflight()
+ if (ROOT/'before.json').exists():assert resume,'migration already attempted; review backup first'
+ else:assert not resume,'no original migration backup'
  ROOT.mkdir(mode=0o700,parents=True,exist_ok=True);(ROOT/'files').mkdir(mode=0o700,exist_ok=True)
- files={}
- for i,dest in enumerate(MANAGED):
-  p=Path(dest);files[dest]=None
-  if p.exists():
-   name=str(i);shutil.copy2(p,ROOT/'files'/name);files[dest]=dict(name=name,mode=p.stat().st_mode&0o777)
- path,m=modem();sources=cmd('busctl','get-property','org.freedesktop.ModemManager1',path,'org.freedesktop.ModemManager1.Modem.Location','Enabled')
- assert sources in ['u 1','u 7'],'unknown GNSS state'
- before=dict(protected=baseline,files=files,releases={name:str((Path('/opt')/name/'current').resolve()) for name in ['ec20-console','ec20-audio-loopback']},recovery_active=cmd('systemctl','is-active','ec20-modem-recovery')=='active',gnss_sources=sources)
- save(ROOT/'before.json',before);shutil.copy2(__file__,ROOT/'rollback.py');(ROOT/'rollback.py').chmod(0o700)
+ if resume:
+  before=json.loads((ROOT/'before.json').read_text());assert before['protected']==baseline
+ else:
+  files={}
+  for i,dest in enumerate(MANAGED):
+   p=Path(dest);files[dest]=None
+   if p.exists():
+    name=str(i);shutil.copy2(p,ROOT/'files'/name);files[dest]=dict(name=name,mode=p.stat().st_mode&0o777)
+  path,m=modem();sources=cmd('busctl','get-property','org.freedesktop.ModemManager1',path,'org.freedesktop.ModemManager1.Modem.Location','Enabled')
+  assert sources in ['u 1','u 7'],'unknown GNSS state'
+  before=dict(protected=baseline,files=files,releases={name:str((Path('/opt')/name/'current').resolve()) for name in ['ec20-console','ec20-audio-loopback']},recovery_active=cmd('systemctl','is-active','ec20-modem-recovery')=='active',gnss_sources=sources)
+ if not resume:save(ROOT/'before.json',before)
+ shutil.copy2(__file__,ROOT/'rollback.py');(ROOT/'rollback.py').chmod(0o700)
  cmd('systemd-run','--unit='+TIMER,'--on-active=20m','--timer-property=AccuracySec=1s','/usr/bin/python3',str(ROOT/'rollback.py'),'--rollback')
  try:
   cmd('systemctl','stop','ec20-modem-recovery')
@@ -204,12 +223,16 @@ def install():
   finally:request('/api/logout',{},session['csrf'])
   save(ROOT/'installation.json',dict(uac_enabled=True,route_verified=True,cellular_https=200,protected_network_unchanged=True,both_mm_at_ports_preserved=True,rollback_armed=True))
   print(json.dumps(dict(installed=True,uac_ready=True,both_mm_at_ports_preserved=True,rollback_armed=True)),flush=True)
- except Exception:
+ except Exception as e:
+  detail=dict(error=str(e),stderr=str(getattr(e,'stderr','')),stdout=str(getattr(e,'output','')))
+  save(ROOT/'failure.json',detail)
+  for stream in Path('/proc/asound').glob('card*/stream0'):
+   (ROOT/('failure-'+stream.parent.name+'-stream.txt')).write_text(stream.read_text())
   rollback();raise
 if __name__=='__main__':
  assert os.geteuid()==0
- p=argparse.ArgumentParser();p.add_argument('--rollback',action='store_true');p.add_argument('--restore-mm',action='store_true');p.add_argument('--check',action='store_true');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--rollback',action='store_true');p.add_argument('--restore-mm',action='store_true');p.add_argument('--check',action='store_true');p.add_argument('--resume',action='store_true');a=p.parse_args()
  if a.restore_mm:restore_mm()
  elif a.rollback:rollback()
  elif a.check:preflight();print('UAC migration preflight passed; no changes')
- else:install()
+ else:install(a.resume)

@@ -1,4 +1,6 @@
-import importlib.util,unittest
+import importlib.util,unittest,json
+from unittest.mock import patch
+from types import SimpleNamespace
 from pathlib import Path
 def load(name,file):
  s=importlib.util.spec_from_file_location(name,Path(__file__).with_name(file));m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
@@ -19,4 +21,14 @@ class VoiceRouteTests(unittest.TestCase):
   at=u.AT()
   for text in ['AT+QDAI=1','AT+QCFG="usbnet",1','AT+QPOWD','ATD+12025550123;']:
    with self.assertRaises(AssertionError):at.query(text)
+ def test_short_first_enumeration_is_not_treated_as_ready(self):
+  clock=[0]
+  def sleep(seconds):clock[0]+=seconds
+  def probe(*args,**kwargs):
+   if 6<=clock[0]<14:return SimpleNamespace(returncode=2,stdout='')
+   fp='temporary' if clock[0]<6 else 'final'
+   return SimpleNamespace(returncode=0,stdout=json.dumps({'device':{'fingerprint':fp}}))
+  with patch.object(u,'wired'),patch.object(u.time,'monotonic',side_effect=lambda:clock[0]),patch.object(u.time,'sleep',side_effect=sleep),patch.object(u.subprocess,'run',side_effect=probe),patch.object(u,'Path',return_value=SimpleNamespace(exists=lambda:True)):
+   device=u.wait_usb()
+  self.assertEqual(device['fingerprint'],'final');self.assertGreaterEqual(clock[0],26)
 if __name__=='__main__':unittest.main()
