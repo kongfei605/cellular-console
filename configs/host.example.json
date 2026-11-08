@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "profile": "ec20f-r08a03-ppp",
+  "device_id": "REPLACE_WITH_LOCAL_DEVICE_IDENTIFIER",
+  "usb_path": "1-2",
+  "wired_interface": "eth0",
+  "cell_interface": "ppp0",
+  "vpn_interfaces": ["tun0"]
+}

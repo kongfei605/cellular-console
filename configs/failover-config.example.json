@@ -1,0 +1,9 @@
+{
+  "wired_interface": "eth0",
+  "cell_interface": "ppp0",
+  "interval_seconds": 5,
+  "failure_count": 3,
+  "recovery_seconds": 30,
+  "probe_targets": ["192.0.2.1"],
+  "vpns": [{"interface": "tun0", "peer": "198.51.100.1"}]
+}
