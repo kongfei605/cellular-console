@@ -15,6 +15,8 @@ python3 deploy/render.py --profile .local/host.json \
   --public-host 127.0.0.1 --output .local/rendered
 ```
 
+Release targets default to Linux/amd64. For an ARM64 Linux host append `TARGET_ARCH=arm64`; `TARGET_OS` and `TARGET_ARCH` also select explicit cross-builds. Match the binary architecture to the server, not the developer's Mac. `make build-native` builds local console/audio demo executables only and does not make macOS modem control available.
+
 For a remote private/VPN IP, replace `127.0.0.1` with that **local IPv4 address** and obtain a trusted certificate covering it. The renderer rejects hostnames, wildcard addresses and systemd argument/specifier injection; reviewed units bind only that address. Do not expose this single-admin console directly to the public Internet.
 
 Review `.local/rendered/plan.json` and every generated file. Templates under `deploy/` contain placeholders and are **not directly installable**. Rendering is unprivileged, refuses an existing output directory, and never applies system changes.
