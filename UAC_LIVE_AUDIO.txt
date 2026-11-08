@@ -53,5 +53,20 @@ EC20 UAC 真实通话音频 — v1.7.0
   sudo python3 /var/lib/ec20-uac-enable-20261108/rollback.py --rollback
 回滚保留审核记录和不带登录能力的闲置系统音频账户；不删除短信或联系人。
 
+2026-11-08部署验收
+- 该固件支持UAC，USB元组最后一位由0改为1，QPCMV=1,2设置并读回成功；未改QDAI。
+- 该固件CFUN重启会短暂枚举两次USB；部署器等待同一代际至少12秒，避免在短暂接口上初始化。
+- 首次部署保护触发后，已实际自动回退USB组合和应用，并验证蜂窝备用恢复、受保护网络配置一致；
+  修正后重新部署。最终验收通过后解除本次20分钟部署回滚定时器，私有备份及手动回滚脚本保留。
+- 软件440Hz回环通过；Chrome真实呼出接通，用户确认网页→电话、电话→网页两个方向均清楚。
+  独立ALSA录放接口同时RUNNING，真实模式经EC20 PCM，无软件回显替代、无录音文件。
+- 对端挂断后PCM双向节点closed，arecord/aplay退出，网页媒体自动停止。
+- 整个通话期间有线主用、蜂窝备用健康、VPN3/3。结束后ppp0绑定HTTPS请求返回200。
+- ModemManager的呼叫对象不一定出现在ObjectManager结果中；实现逐个从同一唯一服务Owner读取Call属性，
+  覆盖上一通话结束后再拨、真实音频接入及其他活动呼叫阻断；不忽略未知或读取失败的状态。
+- 内置浏览器本次拒绝麦克风，实际听感验收使用Mac Chrome。真实来电接听尚未做真人验收。
+- 备份目录仅root可读，包含原始配置/版本、回滚记录，以及验收后的私有应用JSON快照；
+  短信归档仍为2条，Conventional Commits记录代码变更。
+
 参考：EC25 Toolbox 27.1的USB音频/每次呼叫QPCMV准备行为；69使用MM协调初始化，未复制其Swift实现。
 https://github.com/skyrocketingHong/EC25Toolbox/blob/27.1/Sources/EC25Toolbox/Features/CallAudio/ModemStore%2BModuleVoiceRuntime.swift

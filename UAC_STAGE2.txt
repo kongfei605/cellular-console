@@ -1,6 +1,10 @@
 EC20 UAC phase 2 — protected read-only capability inspection
 ==========================================================
 
+Historical inspection record. Superseded on 2026-11-08 by UAC_LIVE_AUDIO.txt:
+UAC is now enabled and two-way call audio has passed human listening checks.
+The descriptions below refer to the earlier read-only inspection stage.
+
 Current hardware: EC20F / EC20CEFAGR08A03M4G, USB 2c7c:0125.
 No EC20 Audio Class interface is currently enumerated. Primary AT is used
 by PPP; secondary AT is open in ModemManager. Raw D-Bus AT is disabled
