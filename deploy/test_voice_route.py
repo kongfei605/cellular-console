@@ -11,6 +11,7 @@ class VoiceRouteTests(unittest.TestCase):
   for arg in ['-credentials /etc/ec20-console/credentials.json','-data-dir /var/lib/ec20-console','-tls-cert %d/tls.crt','-tls-key %d/tls.key','-audio-gateway-key %d/audio.key']:
    self.assertIn(arg,unit)
   self.assertNotIn('-tls-cert /etc/',unit)
+  self.assertIn('RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK',unit)
  def test_readback_requires_usb_voice(self):
   for text in ['+QPCMV: 1,2\nOK','+QPCMV: 1, 2\nOK','+QPCMV: 1\nOK']:self.assertTrue(r.route_on(text))
   for text in ['+QPCMV: 0,0','+QPCMV: 1,0','+QPCMV: 1,1','ERROR','+QPCMV: 10,2']:self.assertFalse(r.route_on(text))
