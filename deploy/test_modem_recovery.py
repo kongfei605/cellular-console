@@ -1,4 +1,5 @@
 import copy
+import datetime
 import importlib.util
 import json
 import os
@@ -7,6 +8,7 @@ from pathlib import Path
 import tempfile
 import threading
 import select
+import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -211,6 +213,36 @@ class RecoveryTests(unittest.TestCase):
                 self.assertIn('OK',at.exchange('AT+CFUN=1,1',1))
             worker.join(2);self.assertEqual(received,['AT','AT+CGMR','AT+CFUN=1,1'])
         finally:os.close(master);os.close(slave)
+
+    def test_ppp_removed_between_exists_and_address_query_is_safe(self):
+        ops=m.LinuxOps.__new__(m.LinuxOps);ops.cfg=self.cfg
+        ops.net={'vpns':[{'interface':'tun0'},{'interface':'tun1'},{'interface':'tun2'}]}
+        ops.usb_identity=lambda:'usb:42'
+        state={'updated':datetime.datetime.now(datetime.timezone.utc).isoformat(), 'active':'wired',
+               'wired_healthy':True,'wired_link':True,'wired_ip':'192.0.2.20',
+               'cellular_healthy':False,'vpns':{'tun0':True,'tun1':True,'tun2':True}}
+        calls=[]
+        class FakePath:
+            def __init__(self,value):self.value=str(value)
+            def exists(self):
+                if self.value=='/sys/class/net/ppp0':calls.append(1);return len(calls)==1
+                return False
+            def read_text(self):
+                if self.value.endswith('status.json'):return json.dumps(state)
+                if self.value.endswith('/carrier'):return '1'
+                raise AssertionError(self.value)
+        def run(args,*_):
+            if args[:2]==['ip','-4']:
+                if args[-1]=='ppp0':raise subprocess.CalledProcessError(1,args)
+                return json.dumps([{'addr_info':[{'scope':'global','local':'192.0.2.20'}]}])
+            if args[:2]==['mmcli','-L']:return '{"modem-list":[]}'
+            if 'ActiveState' in args:return 'active'
+            if 'UnitFileState' in args:return 'enabled'
+            return '123'
+        with patch.object(m,'Path',side_effect=FakePath),patch.object(m,'command',side_effect=run),\
+             patch.object(m.subprocess,'run',return_value=SimpleNamespace(returncode=1)):
+            s=ops.snapshot()
+        self.assertFalse(s['ppp']);self.assertFalse(s['ip_matches']);self.assertTrue(m.missing_fault(s))
 
 
 if __name__=='__main__':unittest.main()
