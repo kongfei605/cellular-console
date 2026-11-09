@@ -14,6 +14,7 @@ import (
 )
 
 type Failover struct {
+	Source               string          `json:"source,omitempty"`
 	Active               string          `json:"active"`
 	WiredHealthy         bool            `json:"wired_healthy"`
 	WiredIP              string          `json:"wired_ip"`

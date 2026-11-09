@@ -1,6 +1,6 @@
 # Cellular Console（蜂窝控制台）
 
-A Go service and Chinese Web interface for Quectel EC20 modems on Linux. Includes status monitoring, SMS conversations and forwarding, call control, a WebRTC audio bridge, guarded GNSS control and optional modem recovery.
+A Go service and Chinese Web interface for Quectel EC20 modems on Linux and macOS. Includes status monitoring, SMS conversations and forwarding, call control, a WebRTC audio bridge, guarded GNSS control and optional Linux modem recovery.
 
 The repository and Go module are named `cellular-console`. Existing Linux binaries, service/account names (`ec20-console`, `ec20-audio-loopback`, etc.) and the `/etc/ec20-toolbox/host.json` profile path retain their established identifiers for deployment compatibility. Renaming the project does not expand the reviewed hardware support below or migrate a running host automatically.
 
@@ -13,8 +13,8 @@ The repository and Go module are named `cellular-console`. Existing Linux binari
 | Browser client for an existing Linux server | Yes | Yes |
 | Local demonstration, no modem access | Yes | Yes; Apple Silicon verified |
 | Software WebRTC audio loopback | Yes | Portable Go implementation; tests run in CI |
-| Direct modem SMS/calls/GNSS | Reviewed profile only | No macOS hardware backend yet |
-| Real modem call audio | EC20 ALSA UAC endpoints required | No CoreAudio adapter yet |
+| Direct modem SMS/calls/GNSS | Reviewed profile only | Native USB AT backend; reviewed EC20F firmware only for writes |
+| Real modem call audio | EC20 ALSA UAC endpoints required | CoreAudio adapter; real call acceptance still required |
 | Modem recovery / systemd deployment | Optional | Unsupported |
 
 ## Quick start: safe local demo
@@ -30,6 +30,26 @@ go run . -demo -listen 127.0.0.1:8787 \
 ```
 
 Open <http://127.0.0.1:8787/>. The username is `admin`; read the randomly generated password from `.local/demo-credentials.json` in your own terminal. The helper refuses to overwrite an existing credentials file. Demo calls and SMS never reach a modem. Stop with Ctrl+C. The demo does not start a separate audio backend automatically; see [audio setup](docs/audio.md).
+
+## macOS: directly connected EC20
+
+Requires Xcode Command Line Tools, Go and Python. Disconnect other AT clients
+(including EC25Toolbox) before starting; the console never seizes their interface.
+
+```sh
+sh scripts/run_macos.sh -ec20-voice -gnss-control
+```
+
+Open <http://127.0.0.1:8787/>. The first run creates a private administrator
+credential file in `~/Library/Application Support/Cellular Console/credentials.json`;
+read its password in your own terminal. SMS archives and local records live in
+the adjacent `data` directory. The launcher does not install a login item.
+
+The Mac backend discovers the ECM network interface and uses native USB AT
+without a serial driver. It observes the default route and probes HTTPS through
+both primary and cellular interfaces; it does not manage automatic failover.
+See [macOS setup and acceptance](docs/macos.md) for identity selection, privacy,
+CoreAudio permissions, hardware boundaries and startup options.
 
 ## Features
 

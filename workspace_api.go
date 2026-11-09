@@ -115,9 +115,9 @@ func (a *App) diagnostics() map[string]any {
 	}
 	loc := "独立定位页读取NMEA；启用需有线主用且蜂窝备用健康，不自动启用或重试；诊断包不含定位数据"
 	if !r.Location {
-		loc = "当前 ModemManager 未提供 Location 接口"
+		loc = "当前设备后端未提供定位接口"
 	}
-	return map[string]any{"generated_at": time.Now().UTC(), "snapshot": s, "runtime": runtime.Version(), "platform": runtime.GOOS + "/" + runtime.GOARCH, "workspace_error": problem, "privacy": "不包含号码、短信正文、联系人、设备唯一标识或密码；包含IP地址与网络健康信息", "capabilities": []map[string]string{
+	capabilities := []map[string]string{
 		{"name": "设备 / SIM / 信号", "status": "只读状态", "detail": "复用现有 ModemManager 采样，不打开串口"},
 		{"name": "网络 / VPN / 流量", "status": "只读状态", "detail": "读取主备控制器状态与接口计数，不执行额外探测"},
 		{"name": "浏览器音频回环", "status": "独立服务已验证", "detail": "统一HTTPS入口内的音频页；内部进程隔离，尚未连接EC20通话音频"},
@@ -127,5 +127,15 @@ func (a *App) diagnostics() map[string]any {
 		{"name": "VoWiFi / IMS", "status": "未接入", "detail": "需独立核实运营商、认证与ePDG/IMS能力"},
 		{"name": "服务代码 / USSD", "status": "未启用", "detail": "不将 *…# 当作普通电话；未增加USSD控制权限"},
 		{"name": "AT 终端", "status": "固定只读诊断替代", "detail": "不开放任意AT命令，不抢占PPP或ModemManager串口"},
-	}, "note": strings.Join([]string{"此页面不会重启模块、修改USB、路由或APN", "诊断只反映最近一次采样，不代表主动联网测试"}, "；")}
+	}
+	if s.Failover.Source == "macos-local" {
+		capabilities[0]["detail"] = "Mac USB AT 读取型号、SIM、注册与信号；仅连接指定 EC20"
+		capabilities[1]["detail"] = "观测默认路由和接口流量，分别通过主网络与 ECM 探测 HTTPS；没有自动主备或 VPN 健康监控"
+		capabilities[2]["status"] = "已接入本机服务"
+		capabilities[2]["detail"] = "浏览器通过控制台鉴权接入 WebRTC；可进行软件音频回环"
+		capabilities[3]["status"] = "按启动选项开放"
+		capabilities[3]["detail"] = "使用 -ec20-voice 开放 CoreAudio；限定 EC20 USB 音频端点，需实际通话验收双向声音"
+		capabilities[8]["detail"] = "固定 AT 后端，无任意 AT 命令入口；接口被其他应用占用时拒绝连接"
+	}
+	return map[string]any{"generated_at": time.Now().UTC(), "snapshot": s, "runtime": runtime.Version(), "platform": runtime.GOOS + "/" + runtime.GOARCH, "workspace_error": problem, "privacy": "不包含号码、短信正文、联系人、设备唯一标识或密码；包含IP地址与网络健康信息", "capabilities": capabilities, "note": strings.Join([]string{"此页面不会重启模块、修改USB、路由或APN", "诊断只反映最近一次采样，导出不会触发新探测"}, "；")}
 }

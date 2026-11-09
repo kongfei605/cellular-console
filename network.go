@@ -2,13 +2,10 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -80,6 +77,7 @@ type networkHistory struct {
 type NetworkMonitor struct {
 	mu           sync.Mutex
 	configPath   string
+	localConfig  func() NetworkConfig
 	historyPath  string
 	read         func(string) (counterReading, error)
 	previous     map[string]previousCounter
@@ -89,34 +87,6 @@ type NetworkMonitor struct {
 }
 
 var interfaceName = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,32}$`)
-
-func readCounters(name string) (counterReading, error) {
-	var c counterReading
-	if !interfaceName.MatchString(name) {
-		return c, fmt.Errorf("invalid interface name")
-	}
-	dir := filepath.Join("/sys/class/net", name)
-	read := func(p string, base int) (uint64, error) {
-		b, e := os.ReadFile(filepath.Join(dir, p))
-		if e != nil {
-			return 0, e
-		}
-		return strconv.ParseUint(strings.TrimSpace(string(b)), base, 64)
-	}
-	var err error
-	if c.Index, err = read("ifindex", 10); err != nil {
-		return c, err
-	}
-	if c.RX, err = read("statistics/rx_bytes", 10); err != nil {
-		return c, err
-	}
-	if c.TX, err = read("statistics/tx_bytes", 10); err != nil {
-		return c, err
-	}
-	flags, err := read("flags", 0)
-	c.Up = flags&1 != 0
-	return c, err
-}
 
 func newNetworkMonitor(dir, configPath string) *NetworkMonitor {
 	n := &NetworkMonitor{configPath: configPath, historyPath: filepath.Join(dir, "network-history.json"), read: readCounters, previous: map[string]previousCounter{}, samples: []TrafficSample{}, history: networkHistory{Events: []NetworkEvent{}}}
@@ -233,6 +203,10 @@ func (n *NetworkMonitor) Collect(f Failover, fresh bool, now time.Time) NetworkS
 	defer n.mu.Unlock()
 	cfg := defaultNetworkConfig()
 	readable := false
+	if n.localConfig != nil {
+		cfg = n.localConfig()
+		readable = true
+	}
 	if b, e := os.ReadFile(n.configPath); e == nil {
 		var parsed NetworkConfig
 		if json.Unmarshal(b, &parsed) == nil && interfaceName.MatchString(parsed.WiredInterface) && interfaceName.MatchString(parsed.CellInterface) && parsed.IntervalSeconds > 0 && parsed.FailureCount > 0 && parsed.RecoverySeconds > 0 && len(parsed.ProbeTargets) > 0 {

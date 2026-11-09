@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>io.cellularconsole.native</string>
+<key>CFBundleName</key><string>Cellular Console Audio</string>
+<key>NSMicrophoneUsageDescription</key><string>将 EC20 USB 通话音频传送到当前已接通的浏览器通话。</string>
+</dict></plist>

@@ -42,6 +42,7 @@ type loginLimit struct {
 }
 
 type App struct {
+	localNetwork        func() (Failover, error)
 	voicePrepare        func(context.Context, string, string) error
 	forwarding          *ForwardStore
 	webhookClient       *http.Client
@@ -112,6 +113,9 @@ func (a *App) failover() (Failover, error) {
 	if a.demo {
 		return demoFailover(), nil
 	}
+	if a.localNetwork != nil {
+		return a.localNetwork()
+	}
 	return readFailover(a.failoverPath)
 }
 
@@ -148,6 +152,9 @@ func (a *App) poll(ctx context.Context) {
 	problem := ""
 	if err != nil {
 		problem = "暂时无法读取调制解调器"
+		if _, ok := a.backend.(*ATBackend); ok {
+			problem = err.Error()
+		}
 		log.Printf("modem snapshot: %v", err)
 	}
 	if err == nil && a.workspace != nil {
@@ -207,7 +214,11 @@ func (a *App) poll(ctx context.Context) {
 		events = append([]Event{{Time: time.Now().UTC(), Kind: kind, Text: text}}, events...)
 	}
 	if previous.Updated.IsZero() {
-		add("system", "控制台已连接，自动备用网络独立运行")
+		if a.localNetwork != nil {
+			add("system", "控制台已启动，正在观测 Mac 本地网络")
+		} else {
+			add("system", "控制台已连接，自动备用网络独立运行")
+		}
 	} else {
 		if previous.Radio.Present != r.Present {
 			if r.Present {
@@ -219,7 +230,7 @@ func (a *App) poll(ctx context.Context) {
 		if previous.Failover.Active != f.Active {
 			if f.Active == "cellular" {
 				add("network", "已切换到蜂窝出口，通话控制暂时锁定")
-			} else {
+			} else if f.Active == "wired" {
 				add("network", "已恢复有线出口")
 			}
 		}
@@ -442,6 +453,10 @@ func (a *App) voiceAction(w http.ResponseWriter, r *http.Request) {
 		}
 		f, err := a.failover()
 		s := a.state()
+		if !a.demo && (s.LastModemSuccess.IsZero() || time.Since(s.LastModemSuccess) > 15*time.Second || time.Until(s.LastModemSuccess) > time.Second) {
+			apiError(w, 409, "设备状态过期，请稍候刷新")
+			return
+		}
 		reason := callPolicy(s.Radio, f, err)
 		if reason != "" {
 			apiError(w, 409, reason)
