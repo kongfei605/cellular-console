@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/kongfei605/cellular-console/internal/atmodem"
 	"github.com/kongfei605/cellular-console/internal/hostconfig"
 	"github.com/kongfei605/cellular-console/internal/voicecontrol"
 	"log"
@@ -14,15 +15,29 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 )
 
 func main() {
+	defaultData, defaultCredentials := "/var/lib/ec20-console", "/etc/ec20-console/credentials.json"
+	if runtime.GOOS == "darwin" {
+		if base, err := os.UserConfigDir(); err == nil {
+			defaultData = filepath.Join(base, "Cellular Console", "data")
+			defaultCredentials = filepath.Join(base, "Cellular Console", "credentials.json")
+		}
+	}
 	listen := flag.String("listen", "127.0.0.1:8787", "HTTP listen address")
-	data := flag.String("data-dir", "/var/lib/ec20-console", "private inbox directory")
-	credsPath := flag.String("credentials", "/etc/ec20-console/credentials.json", "private administrator credentials file")
+	data := flag.String("data-dir", defaultData, "private inbox directory")
+	credsPath := flag.String("credentials", defaultCredentials, "private administrator credentials file")
+	backendMode := flag.String("backend", "auto", "auto, modemmanager, or macos")
+	macLocation := flag.String("mac-usb-location", "", "pin the EC20 USB location (eight lowercase hex digits)")
+	macHelper := flag.String("mac-helper", "", "ec20-native helper path; defaults beside the console executable")
+	macPrimary := flag.String("mac-primary-interface", "", "primary interface; defaults to the observed non-cellular default route")
+	macProbe := flag.String("mac-probe-url", "https://www.apple.com/library/test/success.html", "credential-free HTTPS health endpoint returning 200")
 	failover := flag.String("failover-state", "/run/ec20-failover/status.json", "failover controller state")
 	failoverConfig := flag.String("failover-config", "/etc/ec20-failover.json", "read-only failover configuration")
 	deviceID := flag.String("device-id", "", "ModemManager DeviceIdentifier to select")
@@ -37,8 +52,34 @@ func main() {
 	voiceControl := flag.Bool("ec20-voice", false, "prepare guarded USB voice before dial/answer")
 	hostPath := flag.String("host-config", hostconfig.DefaultPath, "root-owned reviewed hardware and network profile")
 	flag.Parse()
+	if *backendMode == "auto" {
+		*backendMode = "modemmanager"
+		if runtime.GOOS == "darwin" {
+			*backendMode = "macos"
+		}
+	}
+	if *backendMode != "macos" && *backendMode != "modemmanager" {
+		log.Fatal("invalid backend")
+	}
+	macMode := !*demo && *backendMode == "macos"
+	if macMode && *voiceControl && *audioBackend != "" {
+		log.Fatal("Mac voice requires the built-in CoreAudio gateway; omit -audio-backend")
+	}
+	if macMode && runtime.GOOS != "darwin" {
+		log.Fatal("macos backend requires macOS")
+	}
+	if macMode && *macLocation != "" && !atmodem.LocationPattern.MatchString(*macLocation) {
+		log.Fatal("invalid mac-usb-location")
+	}
+	if macMode && *macHelper == "" {
+		exe, e := os.Executable()
+		if e != nil {
+			log.Fatal(e)
+		}
+		*macHelper = filepath.Join(filepath.Dir(exe), "ec20-native")
+	}
 	var host hostconfig.Config
-	if !*demo {
+	if !*demo && !macMode {
 		var err error
 		host, err = hostconfig.Load(*hostPath)
 		if err != nil {
@@ -65,6 +106,9 @@ func main() {
 		log.Fatal("open private inbox: ", err)
 	}
 	var backend Backend = &ModemBackend{expected: *deviceID}
+	if macMode {
+		backend = newATBackend(*macHelper, *macLocation, *deviceID)
+	}
 	if *demo {
 		backend = &DemoBackend{calls: []Call{{ID: "900", Number: "13800000000", Direction: "incoming", State: "来电", StateCode: 3}}}
 	}
@@ -72,7 +116,17 @@ func main() {
 	app := newApp(backend, inbox, creds, *failover, *demo)
 	app.network.configPath = *failoverConfig
 	app.locationControl = *gnssControl
-	if *voiceControl && !*demo {
+	var macNetwork *localNetworkObserver
+	if macMode {
+		macNetwork, err = newLocalNetwork(*macHelper, *macLocation, *macPrimary, *macProbe)
+		if err != nil {
+			log.Fatal(err)
+		}
+		app.localNetwork = macNetwork.status
+		app.network.localConfig = macNetwork.configuration
+		app.network.configPath = ""
+	}
+	if *voiceControl && !*demo && !macMode {
 		app.voicePrepare = func(ctx context.Context, phase, call string) error {
 			_, e := (voicecontrol.Client{Config: host, Failover: *failover}).Prepare(ctx, phase, call)
 			return e
@@ -102,6 +156,16 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if macNetwork != nil {
+		go macNetwork.run(ctx)
+	}
+	if macMode && *audioBackend == "" {
+		closeAudio, e := app.startMacAudio(ctx, backend.(*ATBackend), *voiceControl)
+		if e != nil {
+			log.Fatal(e)
+		}
+		defer closeAudio()
+	}
 	go app.background(ctx)
 	var listener net.Listener
 	for {

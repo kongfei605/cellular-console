@@ -433,7 +433,7 @@ func locationPolicy(r Radio, f Failover, fe error, calls []Call, last time.Time,
 		return "EC20定位接口未就绪"
 	}
 	if !l.Reviewed {
-		return "固件或ModemManager版本未经过本机无重启验证"
+		return "当前设备后端或固件尚未通过本机控制验证"
 	}
 	if l.Signals {
 		return "外部已启用位置广播，请先由管理员核查"
