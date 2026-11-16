@@ -2,6 +2,13 @@
 
 This is a manually reviewed systemd deployment for a trusted private network. It is not a network bootstrapper. Keep an independently verified management connection and wired/cellular controller operational throughout. These instructions do not stop or restart ModemManager, NetworkManager, PPP, VPNs or the network controller.
 
+## Management access
+
+Keep real wired addresses, gateways and VPN endpoints in private operator notes
+outside the repository. Use reserved documentation addresses such as `192.0.2.10`
+in shared examples. Confirm an independent management connection before VPN
+maintenance and supply the actual target address and private profile locally.
+
 ## 1. Build and render
 
 Prerequisites: Linux with systemd `LoadCredential` support, Go 1.26+, Python 3.11+, ModemManager, polkit, and the independent health producer described in [configuration](configuration.md). Real call audio additionally needs the system `alsa-utils` package (`arecord`, `aplay`). Optional maintenance helpers use `mmcli`, `ip`, `ping`, `curl`, `fuser` and `systemd-run`.

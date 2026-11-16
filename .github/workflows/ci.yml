@@ -28,6 +28,8 @@ jobs:
       - run: make build-mac
         if: runner.os == 'macOS'
       - run: python3 -m unittest discover -s deploy -p 'test_*.py'
+      - run: python3 -m unittest discover -s controller -p 'test_*.py'
+      - run: node scripts/test_vpn_ui.cjs
       - run: python3 scripts/update_notices.py --check
       - run: git diff --exit-code
 

@@ -1,0 +1,20 @@
+{
+  "wired_interface": "eth0",
+  "cell_interface": "ppp0",
+  "cell_usb_ids": [["2c7c", "0125"]],
+  "cell_uuid": "00000000-0000-4000-8000-000000000001",
+  "interval_seconds": 5,
+  "failure_count": 3,
+  "recovery_seconds": 30,
+  "probe_targets": ["192.0.2.1", "192.0.2.2"],
+  "vpns": [
+    {
+      "id": "office",
+      "auto_recover": true,
+      "profile": "office-profile",
+      "remote": "192.0.2.10",
+      "peer": "198.51.100.1",
+      "interface": "tun0"
+    }
+  ]
+}

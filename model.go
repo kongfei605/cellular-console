@@ -14,22 +14,46 @@ import (
 )
 
 type Failover struct {
-	Source               string          `json:"source,omitempty"`
-	Active               string          `json:"active"`
-	WiredHealthy         bool            `json:"wired_healthy"`
-	WiredIP              string          `json:"wired_ip"`
-	WiredGateway         string          `json:"wired_gateway"`
-	CellularIP           string          `json:"cellular_ip"`
-	CellularPresent      bool            `json:"cellular_present"`
-	CellularHealthy      bool            `json:"cellular_healthy"`
-	ConnectionState      string          `json:"cellular_connection_state"`
-	VPNs                 map[string]bool `json:"vpns"`
-	Updated              string          `json:"updated"`
-	LastSwitch           string          `json:"last_switch"`
-	WiredLink            bool            `json:"wired_link"`
-	WiredFailures        int             `json:"wired_failures"`
-	WiredRecoverySeconds float64         `json:"wired_recovery_seconds"`
-	DialAttempts         int             `json:"cellular_dial_attempts"`
+	Source               string                    `json:"source,omitempty"`
+	Active               string                    `json:"active"`
+	WiredHealthy         bool                      `json:"wired_healthy"`
+	WiredIP              string                    `json:"wired_ip"`
+	WiredGateway         string                    `json:"wired_gateway"`
+	CellularIP           string                    `json:"cellular_ip"`
+	CellularPresent      bool                      `json:"cellular_present"`
+	CellularHealthy      bool                      `json:"cellular_healthy"`
+	ConnectionState      string                    `json:"cellular_connection_state"`
+	VPNs                 map[string]bool           `json:"vpns"`
+	VPNStatus            map[string]VPNObservation `json:"vpn_status,omitempty"`
+	VPNRecoveryPolicy    string                    `json:"vpn_recovery_policy,omitempty"`
+	WiredProbe           *NetworkProbe             `json:"wired_probe,omitempty"`
+	CellularProbe        *NetworkProbe             `json:"cellular_probe,omitempty"`
+	Updated              string                    `json:"updated"`
+	LastSwitch           string                    `json:"last_switch"`
+	WiredLink            bool                      `json:"wired_link"`
+	WiredFailures        int                       `json:"wired_failures"`
+	WiredRecoverySeconds float64                   `json:"wired_recovery_seconds"`
+	DialAttempts         int                       `json:"cellular_dial_attempts"`
+}
+
+// Detailed observations are display-only. Existing hardware guards continue to
+// consume the conservative legacy booleans and pinned interface configuration.
+type NetworkProbe struct {
+	State  string `json:"state"`
+	Reason string `json:"reason"`
+}
+
+type VPNObservation struct {
+	ID                  string   `json:"id"`
+	State               string   `json:"state"`
+	Reason              string   `json:"reason"`
+	Interface           string   `json:"interface"`
+	LatencyMS           *float64 `json:"latency_ms,omitempty"`
+	ObservedAt          string   `json:"observed_at"`
+	ConsecutiveFailures int      `json:"consecutive_failures"`
+	Recovery            string   `json:"recovery"`
+	BackendFDCount      *int     `json:"backend_fd_count,omitempty"`
+	BackendFDLimit      *int     `json:"backend_fd_limit,omitempty"`
 }
 
 func readFailover(path string) (Failover, error) {

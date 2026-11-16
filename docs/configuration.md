@@ -20,7 +20,7 @@ The console, GNSS broker, audio backend and UAC checker accept `-host-config`; t
 
 ## Independent network controller
 
-Before physical-modem use, provide an independently managed `ec20-failover.service` and real health observations. This repository does not supply that controller or a cellular connection profile. Do not write a fake status file to enable calls.
+Before physical-modem use, provide an independently managed `ec20-failover.service` and real health observations. The console does not install that controller or a cellular connection profile. Optional local controller source and its review boundaries are documented in [VPN monitoring](vpn-monitoring.md). Do not write a fake status file to enable calls.
 
 The existing controller must atomically publish `/run/ec20-failover/status.json` with:
 
@@ -43,3 +43,14 @@ The console treats stale or absent observations as unavailable. Hardware guards 
 - Application JSON: `/var/lib/ec20-console`, private SMS, contacts, forwarding settings and call history. Back up privately.
 
 No credentials, certificates, recordings, private runtime data or real destination numbers are shipped. Forwarding headers can contain secrets and must be treated like credentials. `.gitignore` reduces accidental staging; CI scanning is an additional check, not permission to commit private files.
+
+## Detailed VPN observations
+
+An optional `vpn_status` map uses stable VPN IDs and reports `state`, `reason`,
+actual `interface`, `latency_ms`, `observed_at`, `consecutive_failures` and
+`recovery`. This is display-only and does not override the existing `vpns`
+hardware guard map. `wired_probe` and `cellular_probe` optionally explain
+healthy/unhealthy/unknown uplink detection. Old producer booleans remain
+compatible; false alone cannot distinguish a failed detector from a failed VPN.
+See [VPN monitoring](vpn-monitoring.md) for the recovery contract, configuration
+example and limits. No controller is installed by this change.

@@ -2,11 +2,12 @@ GO ?= go
 TARGET_OS ?= linux
 TARGET_ARCH ?= amd64
 
-.PHONY: test build build-audio build-uac-ready build-gnss build-native build-mac fmt privacy
+.PHONY: test test-web build build-audio build-uac-ready build-gnss build-native build-mac fmt privacy
 
 test:
 	$(GO) test -race ./...
 	python3 -m unittest discover -s deploy -p 'test_*.py'
+	python3 -m unittest discover -s controller -p 'test_*.py'
 
 build:
 	CGO_ENABLED=0 GOOS=$(TARGET_OS) GOARCH=$(TARGET_ARCH) $(GO) build -trimpath -ldflags='-s -w' -o bin/ec20-console-$(TARGET_OS)-$(TARGET_ARCH) .
@@ -35,3 +36,7 @@ privacy:
 
 build-gnss:
 	CGO_ENABLED=0 GOOS=$(TARGET_OS) GOARCH=$(TARGET_ARCH) $(GO) build -trimpath -ldflags='-s -w' -o bin/ec20-gnss-broker-$(TARGET_OS)-$(TARGET_ARCH) ./cmd/ec20-gnss-broker
+
+# Optional UI contract check (Node.js 18+).
+test-web:
+	node scripts/test_vpn_ui.cjs

@@ -61,7 +61,7 @@ CoreAudio permissions, hardware boundaries and startup options.
 - GNSS: guarded start/stop, fix/satellite diagnostics, cache timestamps; antenna state is unknown when the hardware cannot report it.
 - Recovery: an optional, disabled-by-default root helper for USB-present/MM-missing faults; wired/VPN checks, rate limits, owned restoration and data-path verification.
 
-The independent wired/cellular failover controller is an **external dependency**, not installed or implemented by this repository. Its status/config contract is documented in [network integration](docs/configuration.md). The console never replaces routing, PPP, VPN or NetworkManager management. Missing/stale health data blocks protected operations.
+The independent wired/cellular failover controller is a **separate dependency**, never installed or started by the console. Opt-in replacement source with identity-based VPN detection and bounded recovery is available under `controller/`; see [VPN monitoring](docs/vpn-monitoring.md). Its status/config contract is documented in [network integration](docs/configuration.md). The console never replaces routing, PPP, VPN or NetworkManager management. Missing/stale health data blocks protected operations.
 
 ## Linux installation
 
@@ -81,6 +81,10 @@ The renderer **only writes files for review**. It does not run systemctl, instal
 go test -race ./...
 go vet ./...
 python3 -m unittest discover -s deploy -p 'test_*.py'
+python3 -m unittest discover -s controller -p 'test_*.py'
+python3 controller/ec20_failover.py --check --config configs/failover-controller.example.json
+# Optional UI contract check, requires Node.js 18+.
+make test-web
 make build-native
 python3 scripts/check_release.py --history
 python3 scripts/update_notices.py --check

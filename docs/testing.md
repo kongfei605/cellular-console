@@ -4,6 +4,7 @@ Run the commands in README before committing. Tests use local synthetic SMS/call
 
 - Go: HTTP login/origin/CSRF, SMS idempotency and errors, forwarding validation, persistent archives, call ownership, PCM/G.711 conversion, distinct PCM directions through real local ICE/DTLS-SRTP, cleanup and live guard failure.
 - Python: hardware-profile validation, render-only deployment defaults, owned maintenance restoration, recovery escalation/circuit-breaker/rate limits and USB/AT ownership checks using fakes/PTYs.
+- VPN controller: `python3 -m unittest discover -s controller -p 'test_*.py'` simulates dynamic interfaces, detector failures, stale/ambiguous sessions, route mismatches, recovery revalidation, missing-session creation, long reconnect/FD containment, a real child-process exit/recreation cycle, single-flight commands and persistent budgets. `node scripts/test_vpn_ui.cjs` checks tri-state display, freshness and legacy compatibility using Node.js 18+.
 - Release privacy: tracked files and reachable Git blobs/commit metadata; Gitleaks adds common credential rules. Only rule names/paths are printed by the privacy checker. Runtime files are ignored and must remain untracked.
 - License inventory: `scripts/update_notices.py --check` reads actual linked package modules for Linux and Darwin and verifies their pinned license texts.
 - CI: Linux/macOS native tests plus Linux/macOS amd64/arm64 cross-builds. Physical RF, antenna, USB reboots, real call hearing and network failover remain manual tests.

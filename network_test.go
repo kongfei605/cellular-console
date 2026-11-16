@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -113,5 +114,45 @@ func TestRecoveryCountdownAndInvalidHistory(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	if s.HistoryError == "" || string(data) != "broken history" {
 		t.Fatal("corrupt history silently overwritten")
+	}
+}
+
+func TestVPNObservationsSurviveStatusAPIWithoutRelaxingLegacyGuards(t *testing.T) {
+	a, _, path := testApp(t)
+	f := demoFailover()
+	latency := 42.1
+	fdCount, fdLimit := 14, 1024
+	f.VPNs = map[string]bool{"tun0": false}
+	f.VPNRecoveryPolicy = "identity-bounded-v1"
+	f.VPNStatus = map[string]VPNObservation{
+		"office": {ID: "office", State: "healthy", Reason: "peer-reachable", Interface: "tun14", LatencyMS: &latency, ObservedAt: f.Updated, BackendFDCount: &fdCount, BackendFDLimit: &fdLimit},
+		"home":   {ID: "home", State: "unknown", Reason: "probe-command-error", ObservedAt: f.Updated},
+	}
+	f.CellularProbe = &NetworkProbe{State: "unknown", Reason: "probe-command-error"}
+	writeFailover(t, path, f)
+	a.poll(context.Background())
+	cookie, _ := login(t, a)
+	response := request(a, "GET", "/api/status", "", cookie, "", "")
+	if response.Code != 200 {
+		t.Fatal(response.Code)
+	}
+	var s Snapshot
+	if err := json.Unmarshal(response.Body.Bytes(), &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.Failover.VPNStatus["office"].Interface != "tun14" || s.Failover.VPNStatus["home"].State != "unknown" {
+		t.Fatal("lost detailed observations", s.Failover)
+	}
+	if s.Failover.VPNStatus["office"].BackendFDCount == nil || *s.Failover.VPNStatus["office"].BackendFDCount != fdCount {
+		t.Fatal("lost backend resource observation")
+	}
+	if s.Failover.VPNs["tun0"] {
+		t.Fatal("display observation relaxed hardware guard")
+	}
+	if s.Failover.CellularProbe == nil || s.Failover.CellularProbe.State != "unknown" {
+		t.Fatal("lost detector failure")
+	}
+	if s.Failover.VPNRecoveryPolicy != f.VPNRecoveryPolicy {
+		t.Fatal("lost recovery policy")
 	}
 }
