@@ -1,6 +1,10 @@
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts' / 'check_release.py'
@@ -28,6 +32,74 @@ class PublicNetworkPrivacyTests(unittest.TestCase):
         for name in ('README.md', 'docs/deployment.md', 'configs/host.example.json'):
             self.assertTrue(privacy.public_network_context(name))
         self.assertFalse(privacy.public_network_context('forwarding_test.go'))
+
+
+class HistoryCheckoutTests(unittest.TestCase):
+    """Exercise real Git history, including GitHub's extra PR merge object."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.env = {
+            **os.environ,
+            'GIT_AUTHOR_NAME': 'CI Fixture',
+            'GIT_AUTHOR_EMAIL': 'fixture@users.noreply.github.com',
+            'GIT_COMMITTER_NAME': 'CI Fixture',
+            'GIT_COMMITTER_EMAIL': 'fixture@users.noreply.github.com',
+        }
+        self.git('init', '-q', '-b', 'main')
+        (self.root / 'public.txt').write_text('Synthetic release fixture\n')
+        self.git('add', 'public.txt')
+        self.tree = self.git('write-tree')
+        self.base = self.commit('chore: base fixture')
+        self.head = self.commit('fix: source fixture', (self.base,))
+        self.git('update-ref', 'refs/heads/main', self.base)
+        self.git('update-ref', 'refs/heads/change', self.head)
+        self.git('symbolic-ref', 'HEAD', 'refs/heads/change')
+
+    def git(self, *args, env=None):
+        return subprocess.check_output(
+            ['git', *args], cwd=self.root, env=env or self.env,
+            text=True, stderr=subprocess.PIPE,
+        ).strip()
+
+    def commit(self, message, parents=(), personal_author=False):
+        env = dict(self.env)
+        if personal_author:
+            # Construct a synthetic address without embedding a blocked value
+            # in the public test source itself.
+            env['GIT_AUTHOR_EMAIL'] = 'ci-fixture' + '@' + 'gmail.com'
+        args = ['commit-tree', self.tree]
+        for parent in parents:
+            args += ['-p', parent]
+        return self.git(*args, '-m', message, env=env)
+
+    def check(self):
+        with patch.object(privacy, 'ROOT', self.root):
+            return privacy.check(history=True)
+
+    def test_source_history_passes_when_temporary_merge_is_not_fetched(self):
+        merge = self.commit(
+            'Merge source into base', (self.base, self.head), personal_author=True,
+        )
+        self.git('update-ref', 'refs/remotes/pull/2/merge', merge)
+        self.git('symbolic-ref', 'HEAD', 'refs/remotes/pull/2/merge')
+        self.assertFalse(self.check()['passed'])
+
+        # A source-head checkout fetches branch history, without the platform's
+        # extra merge ref. No email rule or real source commit is excluded.
+        self.git('symbolic-ref', 'HEAD', 'refs/heads/change')
+        self.git('update-ref', '-d', 'refs/remotes/pull/2/merge')
+        self.assertTrue(self.check()['passed'])
+
+    def test_personal_email_in_actual_source_history_still_fails(self):
+        source = self.commit('fix: source author fixture', (self.head,), personal_author=True)
+        self.git('update-ref', 'refs/heads/change', source)
+        report = self.check()
+        self.assertFalse(report['passed'])
+        self.assertIn('personal-email', {item['rule'] for item in report['findings']})
+        self.assertNotIn('ci-fixture' + '@' + 'gmail.com', str(report))
 
 
 if __name__ == '__main__':
