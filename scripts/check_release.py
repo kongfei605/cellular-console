@@ -5,6 +5,7 @@ This complements Gitleaks; it is not a complete security audit.
 Only rule names and paths are printed, never matching values.
 """
 import argparse
+import ipaddress
 import json
 from pathlib import Path
 import re
@@ -19,13 +20,26 @@ RULES={
 }
 
 
-def findings(data):
+PRIVATE_NETWORKS=tuple(ipaddress.IPv4Network(value) for value in ('10.0.0.0/8','172.16.0.0/12','192.168.0.0/16'))
+
+
+def public_network_context(name):
+    return name.lower().endswith('.md') or name.startswith('configs/')
+
+
+def findings(data, public_context=False):
     found=[name for name,pattern in RULES.items() if pattern.search(data)]
     # Existing all-zero demonstration numbers exercise +86 normalization.
     # Every other mobile-looking number needs to be replaced by reserved data.
     for match in re.finditer(rb'(?<!\d)(?:\+?86)?(1[3-9]\d{9})(?!\d)',data):
         if match[1] not in (b'13800000000',b'13900000000'):
             found.append('non-synthetic-phone');break
+    if public_context:
+        for match in re.finditer(rb'(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])',data):
+            try:address=ipaddress.IPv4Address(match[0].decode())
+            except ValueError:continue
+            if any(address in network for network in PRIVATE_NETWORKS):
+                found.append('private-network-address');break
     return found
 
 
@@ -36,7 +50,7 @@ def check(history=False):
         path=ROOT/name
         if not path.is_file():continue
         count+=1
-        failures.extend({'rule':rule,'path':name} for rule in findings(path.read_bytes()))
+        failures.extend({'rule':rule,'path':name} for rule in findings(path.read_bytes(),public_network_context(name)))
         if re.search(r'(^|/)(credentials\.json|host\.json|inbox\.json|outbox\.json|workspace\.json)$|\.(pem|key|p12|pfx|bundle|zip)$',name):
             failures.append({'rule':'private-runtime-file','path':name})
     objects=0
@@ -50,7 +64,8 @@ def check(history=False):
             end=raw.index(b'\n',offset);header=raw[offset:end].split();size=int(header[2]);data=raw[end+1:end+1+size];offset=end+size+2
             if header[1] not in (b'blob',b'commit',b'tag'):continue
             objects+=1
-            failures.extend({'rule':rule,'path':'history:'+name} for rule in findings(data))
+            public_context=header[1] in (b'commit',b'tag') or public_network_context(name)
+            failures.extend({'rule':rule,'path':'history:'+name} for rule in findings(data,public_context))
     # Deduplicate without exposing any credential or telephone number.
     unique={json.dumps(item,sort_keys=True) for item in failures}
     return {'tracked_files':count,'history_objects':objects,'passed':not unique,'findings':[json.loads(item) for item in sorted(unique)]}
