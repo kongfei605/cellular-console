@@ -43,6 +43,31 @@ def findings(data, public_context=False):
     return found
 
 
+def history_findings(data, object_type, public_context=False):
+    found = findings(data, public_context)
+    if object_type != b'commit' or 'personal-email' not in found:
+        return found
+    headers, separator, message = data.partition(b'\n\n')
+    parents = set(re.findall(rb'^parent ([0-9a-f]{40}(?:[0-9a-f]{24})?)$', headers, re.M))
+    if not separator or len(parents) < 2:
+        return found
+
+    # Merge attribution is public Git identity metadata. Exempt only the email
+    # portion of one well-formed author and committer header from the email rule.
+    # Names, other headers, and the complete message remain covered. Every other
+    # rule still scans the original bytes, including credentials and private IPs.
+    identity = re.compile(
+        rb'^(author|committer)( [^<>\r\n]* <)[^<>\s]+(> -?\d+ [+-]\d{4})$', re.M,
+    )
+    identities = list(identity.finditer(headers))
+    if len(identities) != 2 or {match[1] for match in identities} != {b'author', b'committer'}:
+        return found
+    email_data = identity.sub(rb'\1\2[public-git-identity]\3', headers) + separator + message
+    if not RULES['personal-email'].search(email_data):
+        found.remove('personal-email')
+    return found
+
+
 def check(history=False):
     failures=[];count=0
     files=subprocess.check_output(['git','ls-files','-z'],cwd=ROOT).decode().split('\0')
@@ -65,7 +90,7 @@ def check(history=False):
             if header[1] not in (b'blob',b'commit',b'tag'):continue
             objects+=1
             public_context=header[1] in (b'commit',b'tag') or public_network_context(name)
-            failures.extend({'rule':rule,'path':'history:'+name} for rule in findings(data,public_context))
+            failures.extend({'rule':rule,'path':'history:'+name} for rule in history_findings(data,header[1],public_context))
     # Deduplicate without exposing any credential or telephone number.
     unique={json.dumps(item,sort_keys=True) for item in failures}
     return {'tracked_files':count,'history_objects':objects,'passed':not unique,'findings':[json.loads(item) for item in sorted(unique)]}
