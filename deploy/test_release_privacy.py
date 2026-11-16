@@ -64,12 +64,15 @@ class HistoryCheckoutTests(unittest.TestCase):
             text=True, stderr=subprocess.PIPE,
         ).strip()
 
-    def commit(self, message, parents=(), personal_author=False):
+    def commit(self, message, parents=(), personal_author=False, personal_committer=False, extra_env=None):
         env = dict(self.env)
         if personal_author:
             # Construct a synthetic address without embedding a blocked value
             # in the public test source itself.
             env['GIT_AUTHOR_EMAIL'] = 'ci-fixture' + '@' + 'gmail.com'
+        if personal_committer:
+            env['GIT_COMMITTER_EMAIL'] = 'ci-fixture' + '@' + 'qq.com'
+        env.update(extra_env or {})
         args = ['commit-tree', self.tree]
         for parent in parents:
             args += ['-p', parent]
@@ -79,16 +82,15 @@ class HistoryCheckoutTests(unittest.TestCase):
         with patch.object(privacy, 'ROOT', self.root):
             return privacy.check(history=True)
 
-    def test_source_history_passes_when_temporary_merge_is_not_fetched(self):
+    def test_temporary_merge_attribution_does_not_block_history(self):
         merge = self.commit(
             'Merge source into base', (self.base, self.head), personal_author=True,
         )
         self.git('update-ref', 'refs/remotes/pull/2/merge', merge)
         self.git('symbolic-ref', 'HEAD', 'refs/remotes/pull/2/merge')
-        self.assertFalse(self.check()['passed'])
+        self.assertTrue(self.check()['passed'])
 
-        # A source-head checkout fetches branch history, without the platform's
-        # extra merge ref. No email rule or real source commit is excluded.
+        # Both the default PR merge checkout and the source checkout pass.
         self.git('symbolic-ref', 'HEAD', 'refs/heads/change')
         self.git('update-ref', '-d', 'refs/remotes/pull/2/merge')
         self.assertTrue(self.check()['passed'])
@@ -100,6 +102,54 @@ class HistoryCheckoutTests(unittest.TestCase):
         self.assertFalse(report['passed'])
         self.assertIn('personal-email', {item['rule'] for item in report['findings']})
         self.assertNotIn('ci-fixture' + '@' + 'gmail.com', str(report))
+
+    def test_formal_merge_on_main_allows_standard_identity_emails(self):
+        merge = self.commit(
+            'Merge pull request #2', (self.base, self.head),
+            personal_author=True, personal_committer=True,
+        )
+        self.git('update-ref', 'refs/heads/main', merge)
+        self.git('symbolic-ref', 'HEAD', 'refs/heads/main')
+        self.assertTrue(self.check()['passed'])
+
+    def test_personal_email_in_merge_message_still_fails(self):
+        for message in (
+            'Contact ci-fixture' + '@' + 'gmail.com',
+            'Merge fixture\n\nauthor Fixture <ci-fixture' + '@' + 'gmail.com> 1 +0000',
+        ):
+            with self.subTest(message_kind=message.split()[0]):
+                merge = self.commit(message, (self.base, self.head), personal_author=True)
+                self.git('update-ref', 'refs/heads/main', merge)
+                report = self.check()
+                self.assertFalse(report['passed'])
+                self.assertIn('personal-email', {item['rule'] for item in report['findings']})
+
+    def test_email_in_merge_author_name_still_fails(self):
+        merge = self.commit(
+            'Merge fixture', (self.base, self.head), personal_author=True,
+            extra_env={'GIT_AUTHOR_NAME': 'ci-fixture' + '@' + 'gmail.com'},
+        )
+        self.git('update-ref', 'refs/heads/main', merge)
+        self.assertIn('personal-email', {item['rule'] for item in self.check()['findings']})
+
+    def test_credentials_and_private_addresses_in_merge_metadata_still_fail(self):
+        for email, expected in (
+            ('ghp_' + 'A' * 36 + '@example.com', 'provider-token'),
+            ('fixture@10.23.4.5', 'private-network-address'),
+        ):
+            with self.subTest(rule=expected):
+                merge = self.commit(
+                    'Merge fixture', (self.base, self.head), personal_author=True,
+                    extra_env={'GIT_COMMITTER_EMAIL': email},
+                )
+                self.git('update-ref', 'refs/heads/main', merge)
+                self.assertIn(expected, {item['rule'] for item in self.check()['findings']})
+
+    def test_personal_email_in_tracked_file_still_fails(self):
+        (self.root / 'public.txt').write_text('Contact ci-fixture' + '@' + 'gmail.com\n')
+        report = self.check()
+        self.assertFalse(report['passed'])
+        self.assertIn({'path': 'public.txt', 'rule': 'personal-email'}, report['findings'])
 
 
 if __name__ == '__main__':
